@@ -111,7 +111,6 @@ AegisGraph Sentinel 2.0/
 │   ├── inference/         # Risk scoring and explanation
 │   ├── api/               # FastAPI service
 │   └── utils/             # Helper utilities
-├── notebooks/             # Jupyter notebooks for analysis
 ├── tests/                 # Unit tests
 ├── data/                  # Generated datasets (created at runtime)
 ├── models/                # Saved model checkpoints (created at runtime)
