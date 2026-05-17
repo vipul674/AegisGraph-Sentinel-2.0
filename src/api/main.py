@@ -187,7 +187,7 @@ except ImportError as e:
                     neighbors = list(G.neighbors(source_account))
                     if len(neighbors) >= 2:
                         # Check for sequential chain pattern (max 10 hops)
-                        chain_length = 0
+                        chain_length = 0 #ready
                         current = source_account
                         visited = set()
                         max_depth = 10  # Prevent long searches

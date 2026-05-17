@@ -315,6 +315,6 @@ For inquiries regarding deployment or collaboration, please contact the developm
 
 
 **Domain**: Financial Crime Prevention & AI/ML  
-**Date**: February 26, 2026
+**Last Updated**: May 17, 2026
 
 **"We don't just stop transactions. We stop the criminal's clock."**

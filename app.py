@@ -11,7 +11,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
-import time
+import time #ready to deploy
 
 # Page configuration
 st.set_page_config(

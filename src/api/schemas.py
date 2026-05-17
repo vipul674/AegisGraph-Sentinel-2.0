@@ -12,7 +12,7 @@ class BiometricsData(BaseModel):
     hold_times: List[float] = Field(description="Key hold times in milliseconds")
     flight_times: List[float] = Field(description="Key flight times in milliseconds")
     
-    @field_validator('hold_times', 'flight_times')
+    @field_validator('hold_times', 'flight_times') #ready
     @classmethod
     def validate_positive(cls, v):
         if any(x < 0 for x in v):

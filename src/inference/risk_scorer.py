@@ -11,7 +11,7 @@ Combines multiple fraud signals into a comprehensive risk score:
 import torch
 import numpy as np
 from typing import Dict, Optional, Tuple, List
-import networkx as nx
+import networkx as nx  #models
 
 from ..models.risk_model import FraudDetectionModel
 from ..features.velocity_calculator import VelocityCalculator, Transaction
