@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing! This guide will help you get set up and understand the project structure.
 
+We welcome contributions from students, researchers, and industry professionals working on financial fraud detection and graph neural networks.
+
 ## Table of Contents
 - [Quick Start](#quick-start)
 - [Development Environment](#development-environment)
