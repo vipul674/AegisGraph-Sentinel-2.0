@@ -2,15 +2,17 @@
 Pydantic schemas for API request/response validation
 """
 
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Dict
+from pydantic import BaseModel, Field, field_validator, AliasChoices
+from typing import Optional, List, Dict, Union
 from datetime import datetime
 
 
 class BiometricsData(BaseModel):
     """Keystroke biometrics data"""
-    hold_times: List[float] = Field(description="Key hold times in milliseconds")
-    flight_times: List[float] = Field(description="Key flight times in milliseconds")
+    hold_times: List[float] = Field(default_factory=list, description="Key hold times in milliseconds")
+    flight_times: List[float] = Field(default_factory=list, description="Key flight times in milliseconds")
+    keystroke_events: Optional[List[Dict]] = Field(default=None, description="Raw keystroke events")
+    mouse_movements: Optional[List[Dict]] = Field(default=None, description="Raw mouse movement events")
     
     @field_validator('hold_times', 'flight_times')
     @classmethod
@@ -23,12 +25,18 @@ class BiometricsData(BaseModel):
 class TransactionCheckRequest(BaseModel):
     """Request schema for transaction fraud check"""
     transaction_id: str = Field(description="Unique transaction identifier")
-    source_account: str = Field(description="Source account ID")
-    target_account: str = Field(description="Target account ID")
+    source_account: str = Field(
+        validation_alias=AliasChoices('source_account', 'from_account'),
+        description="Source account ID",
+    )
+    target_account: str = Field(
+        validation_alias=AliasChoices('target_account', 'to_account'),
+        description="Target account ID",
+    )
     amount: float = Field(gt=0, description="Transaction amount")
     currency: str = Field(default="INR", description="Currency code")
-    mode: str = Field(description="Transaction mode (UPI, IMPS, NEFT, etc.)")
-    timestamp: str = Field(description="Transaction timestamp (ISO format)")
+    mode: str = Field(default="payment", description="Transaction mode (UPI, IMPS, NEFT, etc.)")
+    timestamp: Union[str, float] = Field(description="Transaction timestamp (ISO format or epoch seconds)")
     device_id: Optional[str] = Field(default=None, description="Device identifier")
     biometrics: Optional[BiometricsData] = Field(default=None, description="Behavioral biometrics")
     ip_address: Optional[str] = Field(default=None, description="IP address")
@@ -68,6 +76,7 @@ class TransactionCheckResponse(BaseModel):
     transaction_id: str
     risk_score: float = Field(ge=0, le=1, description="Overall risk score")
     decision: str = Field(description="Decision: ALLOW, REVIEW, or BLOCK")
+    factors: Dict[str, float] = Field(default_factory=dict, description="Legacy factor map")
     confidence: float = Field(ge=0, le=1, description="Confidence in decision")
     breakdown: RiskBreakdown = Field(description="Risk score breakdown")
     explanation: str = Field(description="Human-readable explanation")
@@ -157,6 +166,9 @@ class StatsResponse(BaseModel):
     avg_risk_score: float
     avg_processing_time_ms: float
     uptime_seconds: float
+    total_checks: int = 0
+    flagged_transactions: int = 0
+    average_response_time: float = 0.0
 
 
 class ErrorResponse(BaseModel):

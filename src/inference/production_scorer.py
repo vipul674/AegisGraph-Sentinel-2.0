@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import logging
+from collections import deque
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -432,22 +433,56 @@ class ExplainabilityEngine:
         Returns:
             List of node ID paths
         """
-        paths = []
-        # BFS to enumerate paths
-        queue = [[source_node]]
-        
+        if k_hops < 1:
+            return []
+
+        idx_to_node_id = subgraph.get('idx_to_node_id', {})
+        node_id_to_idx = subgraph.get('node_id_to_idx', {})
+        edge_index = subgraph.get('edge_index')
+
+        if source_node not in node_id_to_idx or edge_index is None:
+            logger.warning(
+                "Unable to trace fraud paths: source node missing or subgraph edges unavailable"
+            )
+            return []
+
+        source_idx = node_id_to_idx[source_node]
+
+        # Build a local adjacency map from the extracted subgraph. We traverse
+        # simple paths only so cycles cannot expand forever.
+        adjacency: Dict[int, List[int]] = {}
+        if isinstance(edge_index, torch.Tensor):
+            edge_pairs = edge_index.detach().cpu().tolist()
+        else:
+            edge_pairs = np.asarray(edge_index).tolist()
+
+        if len(edge_pairs) != 2:
+            logger.warning("Unable to trace fraud paths: unexpected edge_index shape")
+            return []
+
+        for src_idx, tgt_idx in zip(edge_pairs[0], edge_pairs[1]):
+            adjacency.setdefault(int(src_idx), []).append(int(tgt_idx))
+            adjacency.setdefault(int(tgt_idx), []).append(int(src_idx))
+
+        queue = deque([[source_idx]])
+        paths: List[List[str]] = []
+
         while queue:
-            path = queue.pop(0)
-            if len(path) > k_hops:
+            path = queue.popleft()
+            current_idx = path[-1]
+            hop_count = len(path) - 1
+
+            if hop_count >= k_hops:
                 continue
-            
-            current_node = path[-1]
-            # Find neighbors in subgraph...
-            # This is simplified for now
-            
-            if len(path) > 1:
-                paths.append(path)
-        
+
+            for neighbor_idx in adjacency.get(current_idx, []):
+                if neighbor_idx in path:
+                    continue
+
+                next_path = path + [neighbor_idx]
+                paths.append([idx_to_node_id.get(idx, 'UNKNOWN') for idx in next_path])
+                queue.append(next_path)
+
         return paths
 
 

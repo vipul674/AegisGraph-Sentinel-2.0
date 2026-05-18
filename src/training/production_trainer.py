@@ -60,10 +60,13 @@ class FocalLoss(nn.Module):
         Args:
             logits: Model output probabilities [batch_size, 1]
             targets: Binary labels [batch_size, 1]
-        
+
         Returns:
             Scalar loss
         """
+        # Keep the target tensor aligned with the model output shape and dtype.
+        targets = targets.to(dtype=logits.dtype).reshape_as(logits)
+
         # Clip probabilities to avoid log(0)
         epsilon = 1e-7
         probs_clipped = torch.clamp(logits, epsilon, 1 - epsilon)
@@ -305,11 +308,11 @@ class ProductionTrainer:
             
             # Forward pass
             outputs = self.model(batch)
-            logits = outputs['risk'] if isinstance(outputs, dict) else outputs
-            targets = batch.y.unsqueeze(-1) if len(batch.y.shape) == 1 else batch.y
+            risk_scores = outputs['risk'] if isinstance(outputs, dict) else outputs
+            targets = batch.y.to(device=risk_scores.device, dtype=risk_scores.dtype).reshape_as(risk_scores)
             
             # Loss
-            loss = self.loss_fn(logits, targets.float())
+            loss = self.loss_fn(risk_scores, targets)
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -322,7 +325,7 @@ class ProductionTrainer:
             num_batches += 1
             
             # Predictions
-            preds = logits.detach().cpu().numpy() > 0.5
+            preds = risk_scores.detach().cpu().numpy() > 0.5
             all_preds.extend(preds.flatten().tolist())
             all_targets.extend(targets.detach().cpu().numpy().flatten().tolist())
             
@@ -331,6 +334,10 @@ class ProductionTrainer:
                     f"Epoch {epoch} [{batch_idx+1}/{len(dataloader)}] "
                     f"Loss: {loss.item():.4f}"
                 )
+
+        if num_batches == 0:
+            logger.warning(f"Epoch {epoch}: empty training dataloader; returning default metrics")
+            return self._empty_metrics(epoch=epoch, total_loss=0.0)
         
         # Compute metrics
         metrics = self._compute_metrics(
@@ -363,22 +370,26 @@ class ProductionTrainer:
                 
                 # Forward pass
                 outputs = self.model(batch)
-                logits = outputs['risk'] if isinstance(outputs, dict) else outputs
-                targets = batch.y.unsqueeze(-1) if len(batch.y.shape) == 1 else batch.y
+                risk_scores = outputs['risk'] if isinstance(outputs, dict) else outputs
+                targets = batch.y.to(device=risk_scores.device, dtype=risk_scores.dtype).reshape_as(risk_scores)
                 
                 # Loss
-                loss = self.loss_fn(logits, targets.float())
+                loss = self.loss_fn(risk_scores, targets)
                 
                 # Tracking
                 total_loss += loss.item()
                 num_batches += 1
                 
                 # Predictions
-                probs = logits.detach().cpu().numpy()
+                probs = risk_scores.detach().cpu().numpy()
                 preds = (probs > 0.5).astype(int)
                 all_probs.extend(probs.flatten().tolist())
                 all_preds.extend(preds.flatten().tolist())
                 all_targets.extend(targets.detach().cpu().numpy().flatten().tolist())
+        
+        if num_batches == 0:
+            logger.warning(f"Epoch {epoch} ({phase}): empty dataloader; returning default metrics")
+            return self._empty_metrics(epoch=epoch, total_loss=0.0)
         
         # Compute metrics with probabilities for ROC-AUC
         metrics = self._compute_metrics(
@@ -401,8 +412,15 @@ class ProductionTrainer:
     ) -> TrainingMetrics:
         """Compute all evaluation metrics"""
         
-        all_preds = np.array(all_preds)
-        all_targets = np.array(all_targets)
+        all_preds = np.asarray(all_preds)
+        all_targets = np.asarray(all_targets)
+
+        if all_preds.size == 0 or all_targets.size == 0:
+            return self._empty_metrics(epoch=epoch, total_loss=total_loss)
+
+        # Ensure sklearn receives integer class labels even if tensors were float.
+        all_preds = all_preds.astype(int, copy=False)
+        all_targets = all_targets.astype(int, copy=False)
         
         # Basic metrics
         accuracy = np.mean(all_preds == all_targets)
@@ -455,6 +473,26 @@ class ProductionTrainer:
             fraud_precision=fraud_precision,
             fraud_recall=fraud_recall,
             fraud_f1=fraud_f1,
+        )
+    
+    def _empty_metrics(self, epoch: int, total_loss: float) -> TrainingMetrics:
+        """Return safe defaults for empty dataloaders and degenerate splits."""
+        return TrainingMetrics(
+            epoch=epoch,
+            loss=total_loss,
+            accuracy=0.0,
+            precision=0.0,
+            recall=0.0,
+            f1=0.0,
+            roc_auc=0.0,
+            pr_auc=0.0,
+            tp=0,
+            fp=0,
+            fn=0,
+            tn=0,
+            fraud_precision=0.0,
+            fraud_recall=0.0,
+            fraud_f1=0.0,
         )
     
     def _move_batch_to_device(self, batch):

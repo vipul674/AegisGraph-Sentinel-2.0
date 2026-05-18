@@ -120,6 +120,22 @@ class KeystrokeDynamicsAnalyzer:
         }
         
         return features
+
+    def analyze(self, events) -> Dict[str, float]:
+        """Backward-compatible wrapper used by tests and older callers."""
+        sequence = self._coerce_sequence(events)
+        features = self.extract_features(sequence)
+        stress = self.detect_stress(features)
+
+        raw_timestamps = [float(event.get('timestamp', 0.0)) for event in events or [] if isinstance(event, dict) and 'timestamp' in event]
+        if len(raw_timestamps) > 2:
+            intervals = np.diff(raw_timestamps)
+            if len(intervals) > 1:
+                interval_cv = variation(intervals) if np.mean(intervals) > 0 else 0.0
+                stress['stress_score'] = min(stress['stress_score'] + max(interval_cv - 0.3, 0.0) * 0.5, 1.0)
+                stress['is_stressed'] = stress['stress_score'] > self.stress_threshold
+
+        return {**features, **stress}
     
     def detect_stress(
         self,
@@ -235,6 +251,54 @@ class KeystrokeDynamicsAnalyzer:
             'total_events': 0,
             'session_duration': 0.0,
         }
+
+    def _coerce_sequence(self, events) -> KeystrokeSequence:
+        """Normalize dict-based test fixtures into a KeystrokeSequence."""
+        if isinstance(events, KeystrokeSequence):
+            return events
+
+        normalized = []
+        for index, event in enumerate(events or []):
+            if isinstance(event, KeystrokeEvent):
+                normalized.append(event)
+                continue
+
+            key_id = event.get('key') or event.get('key_id') or f'key_{index}'
+            timestamp = float(event.get('timestamp', 0.0))
+            event_type = event.get('event_type', '')
+            is_backspace = bool(event.get('is_backspace', key_id == 'backspace' or event_type == 'backspace'))
+
+            if event_type == 'keydown':
+                press_time = timestamp
+                release_time = timestamp + 0.05
+            elif event_type == 'keyup':
+                press_time = max(timestamp - 0.05, 0.0)
+                release_time = timestamp
+            else:
+                press_time = timestamp
+                release_time = timestamp + 0.05
+
+            normalized.append(
+                KeystrokeEvent(
+                    key_id=key_id,
+                    press_time=press_time,
+                    release_time=release_time,
+                    is_backspace=is_backspace,
+                )
+            )
+
+        if normalized:
+            session_start = min(e.press_time for e in normalized)
+            session_end = max(e.release_time for e in normalized)
+        else:
+            session_start = 0.0
+            session_end = 0.0
+
+        return KeystrokeSequence(
+            events=normalized,
+            session_start=session_start,
+            session_end=session_end,
+        )
 
 
 class LightweightBiometricModel:

@@ -67,8 +67,10 @@ class FraudPatternDetector:
         
         # Search for cycles
         try:
-            all_cycles = nx.simple_cycles(graph)
-            
+            # Materialize the generator first so a traversal error cannot leave
+            # partially processed rings in the output.
+            all_cycles = list(nx.simple_cycles(graph))
+
             for cycle in all_cycles:
                 if len(cycle) >= self.min_chain_length:
                     # Extract transactions in this cycle
@@ -96,7 +98,7 @@ class FraudPatternDetector:
                         })
         
         except nx.NetworkXError as e:
-            logger.warning(f"Error detecting cycles: {e}")
+            logger.warning("Error detecting cycles while enumerating mule rings: %s", e)
         
         return detected_rings
     
