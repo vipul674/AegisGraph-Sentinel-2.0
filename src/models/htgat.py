@@ -187,11 +187,8 @@ class HTGATConv(MessagePassing):
             x=(x_src, x_dst),
             edge_type=edge_type,
             edge_attr=edge_attr,
-            return_attention_weights=return_attention_weights,
         )
-        
-        if return_attention_weights:
-            out, attention_weights = out
+        attention_weights = getattr(self, '_last_attention_weights', None)
         
         # Concatenate or average multi-head outputs
         if self.concat:
@@ -203,7 +200,7 @@ class HTGATConv(MessagePassing):
         out = out + self.bias
         
         if return_attention_weights:
-            return out, attention_weights
+            return out, (edge_index, attention_weights)
         return out
     
     def message(
@@ -294,7 +291,8 @@ class HTGATConv(MessagePassing):
         
         # Normalize attention coefficients using softmax
         alpha = softmax(alpha, index, num_nodes=size_i)
-        
+        self._last_attention_weights = alpha.detach()
+
         return alpha.unsqueeze(-1)  # [num_edges, heads, 1]
     
     def _apply_type_specific_transform(

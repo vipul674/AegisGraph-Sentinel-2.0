@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 # API Configuration
-API_URL = "http://localhost:8000"
+API_URL = "http://localhost:8080"
 
 # Custom CSS
 st.markdown("""
@@ -128,65 +128,72 @@ if page == "🏠 Dashboard":
             # Quick Test Section
             st.markdown("---")
             st.subheader("⚡ Quick Transaction Test")
-            
-            # Initialize session state
+
+            # Initialize session state for quick test
             if 'quick_test_result' not in st.session_state:
                 st.session_state.quick_test_result = None
             if 'quick_test_error' not in st.session_state:
                 st.session_state.quick_test_error = None
-            
-            # Use form for proper state management
-            with st.form("quick_test_form"):
-                quick_col1, quick_col2, quick_col3 = st.columns([2, 1, 1])
-                with quick_col1:
-                    quick_amount = st.number_input("Amount (₹)", min_value=1.0, max_value=1000000.0, 
-                                                   value=5000.0, step=100.0, key="quick_amount_input")
-                with quick_col2:
-                    quick_mode = st.selectbox("Mode", ["UPI", "IMPS", "NEFT", "RTGS"], key="quick_mode_input")
-                with quick_col3:
+
+            # Compact input form (keeps captions and session-state behavior)
+            with st.form("quick_transaction_test", clear_on_submit=False):
+                quick_cols = st.columns([1.3, 1, 0.9])
+                with quick_cols[0]:
+                    st.number_input(
+                        "Amount",
+                        min_value=1.0,
+                        max_value=1000000.0,
+                        value=5000.0,
+                        step=100.0,
+                        format="%.2f",
+                        key="quick_amount_input",
+                    )
+                    st.caption("₹ transaction value to score")
+                with quick_cols[1]:
+                    st.selectbox("Mode", ["UPI", "IMPS", "NEFT", "RTGS"], index=0, key="quick_mode_input")
+                    st.caption("Payment rail")
+                with quick_cols[2]:
                     st.write("")
                     st.write("")
                     submitted = st.form_submit_button("🔍 Check Now", use_container_width=True)
-                
-                if submitted:
-                    # Clear previous result
-                    st.session_state.quick_test_result = None
-                    st.session_state.quick_test_error = None
-                    
-                    # Get current values
-                    current_amount = st.session_state.quick_amount_input
-                    current_mode = st.session_state.quick_mode_input
-                    
-                    # Make API call
-                    with st.spinner("Analyzing..."):
-                        txn = {
-                            "transaction_id": f"QUICK_{int(time.time())}",
-                            "source_account": "quick_test_user",
-                            "target_account": "test_merchant",
-                            "amount": float(current_amount),
-                            "currency": "INR",
-                            "mode": current_mode,
-                            "timestamp": datetime.utcnow().isoformat() + "Z"
-                        }
-                        
-                        try:
-                            response = requests.post(f"{API_URL}/api/v1/fraud/check", json=txn, timeout=15)
-                            response.raise_for_status()
-                            st.session_state.quick_test_result = response.json()
-                        except requests.exceptions.RequestException as e:
-                            st.session_state.quick_test_error = f"API Error: {str(e)}"
-                        except Exception as e:
-                            st.session_state.quick_test_error = f"Error: {str(e)}"
-            
+
+            if submitted:
+                # Reset previous state
+                st.session_state.quick_test_result = None
+                st.session_state.quick_test_error = None
+
+                current_amount = st.session_state.get("quick_amount_input", 5000.0)
+                current_mode = st.session_state.get("quick_mode_input", "UPI")
+
+                with st.spinner("Analyzing..."):
+                    txn = {
+                        "transaction_id": f"QUICK_{int(time.time())}",
+                        "source_account": "quick_test_user",
+                        "target_account": "test_merchant",
+                        "amount": float(current_amount),
+                        "currency": "INR",
+                        "mode": current_mode,
+                        "timestamp": datetime.utcnow().isoformat() + "Z"
+                    }
+
+                    try:
+                        response = requests.post(f"{API_URL}/api/v1/fraud/check", json=txn, timeout=15)
+                        response.raise_for_status()
+                        st.session_state.quick_test_result = response.json()
+                    except requests.exceptions.RequestException as e:
+                        st.session_state.quick_test_error = f"API Error: {str(e)}"
+                    except Exception as e:
+                        st.session_state.quick_test_error = f"Error: {str(e)}"
+
             # Display result if exists
             if st.session_state.quick_test_result:
                 result = st.session_state.quick_test_result
                 risk_score = result.get('risk_score', 0)
                 decision = result.get('decision', 'UNKNOWN')
-                
+
                 st.markdown("---")
                 col_a, col_b, col_c = st.columns(3)
-                
+
                 with col_a:
                     st.metric("Risk Score", f"{risk_score:.3f}")
                 with col_b:
@@ -195,7 +202,7 @@ if page == "🏠 Dashboard":
                 with col_c:
                     conf = result.get('confidence', 0.85)
                     st.metric("Confidence", f"{conf:.1%}")
-                
+
                 # Risk Gauge
                 fig = go.Figure(go.Indicator(
                     mode="gauge+number+delta",
@@ -223,8 +230,8 @@ if page == "🏠 Dashboard":
                 ))
                 fig.update_layout(height=300)
                 st.plotly_chart(fig, use_container_width=True)
-                
-                # Show risk breakdown - use 'breakdown' key (API returns breakdown, not risk_breakdown)
+
+                # Show risk breakdown - use 'breakdown' key (API returns breakdown)
                 breakdown = result.get('breakdown', {})
                 if breakdown:
                     st.subheader("📊 Risk Breakdown")
@@ -232,15 +239,15 @@ if page == "🏠 Dashboard":
                     for idx, (component, value) in enumerate(breakdown.items()):
                         with breakdown_cols[idx]:
                             st.metric(component.title(), f"{value:.2%}")
-                
+
                 st.info(f"💡 {result.get('explanation', 'No explanation available')}")
                 st.success("✅ Transaction analyzed successfully!")
-                
+
                 # Clear result button
                 if st.button("Clear Result", key="clear_quick_result"):
                     st.session_state.quick_test_result = None
                     st.rerun()
-            
+
             # Display error if exists
             if st.session_state.quick_test_error:
                 st.error(st.session_state.quick_test_error)
@@ -1308,6 +1315,28 @@ elif page == "🎯 Innovations":
 # Page: About
 elif page == "ℹ️ About System":
     st.header("ℹ️ About AegisGraph Sentinel 2.0")
+    # Insert latest PR summary for quick review
+    with st.expander("Latest PR: feat: implement production-ready HTGNN with temporal graphs (#21)"):
+        st.markdown('''
+        **Title:** feat: implement production-ready HTGNN with temporal graphs
+
+        **Summary:** Implements production-ready HTGNN pipeline: training, inference, pattern detection, and deployment artifacts. Includes production trainer, realtime scorer, and fraud pattern detector. Adds example pipeline and docs; updates Streamlit app API port to 8080.
+
+        **Highlights:**
+        - Real HTGNN Model with Temporal Graphs (HTGAT)
+        - Production training pipeline (early stopping, checkpointing, focal loss)
+        - Real-time inference scorer with explainability
+        - Mule ring, fan-in, fan-out and velocity anomaly detection
+        - FastAPI backend and Streamlit dashboard integration
+
+        **Verify locally:**
+        ```bash
+        python examples/complete_pipeline.py
+        python -m pytest tests/ -v
+        ```
+
+        **PR:** https://github.com/Puneet04-tech/AegisGraph-Sentinel-2.0/pull/21
+        ''')
     
     st.markdown("""
     ### 🛡️ Real-Time Cross-Channel Mule Account Detection
@@ -1396,7 +1425,7 @@ elif page == "ℹ️ About System":
     
     #### 📚 Documentation
     
-    - Interactive API Docs: http://localhost:8000/docs
+    - Interactive API Docs: http://localhost:8080/docs
     - Innovations Guide: See INNOVATIONS.md
     - Project README: See README.md
     - Deployment Guide: See DEPLOYMENT.md

@@ -13,6 +13,7 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 import networkx as nx
+import pandas as pd
 
 
 @dataclass
@@ -47,6 +48,24 @@ class VelocityCalculator:
     ):
         self.time_window = time_window
         self.burst_window = burst_window
+
+    def calculate_kinetic_energy(self, transactions) -> float:
+        """Compatibility wrapper for legacy callers."""
+        return self.compute_kinetic_energy(self._normalize_transactions(transactions))
+
+    def calculate_chain_velocity(self, transactions, graph: Optional[nx.Graph] = None) -> float:
+        """Compatibility wrapper returning the chain velocity scalar."""
+        normalized = self._normalize_transactions(transactions)
+        if graph is None:
+            if len(normalized) < 2:
+                return 0.0
+            total_time = normalized[-1].timestamp - normalized[0].timestamp
+            if total_time <= 0:
+                return float(len(normalized) - 1)
+            return float((len(normalized) - 1) / total_time)
+
+        chain_features = self.compute_chain_velocity(normalized, graph)
+        return float(chain_features['chain_velocity'])
     
     def compute_kinetic_energy(
         self,
@@ -153,15 +172,23 @@ class VelocityCalculator:
         Returns:
             Dictionary with burst metrics
         """
+        normalized = self._normalize_transactions(transactions)
+
+        # Backward-compatible overload: detect_burst(recent, historical) -> float.
+        if not isinstance(current_time, (int, float)):
+            recent = normalized
+            baseline = self._normalize_transactions(current_time)
+            return self._burst_score_from_windows(recent, baseline)
+
         # Get transactions in burst window
         recent = [
-            t for t in transactions
+            t for t in normalized
             if current_time - t.timestamp <= self.burst_window
         ]
-        
+
         # Get transactions in longer window for comparison
         baseline = [
-            t for t in transactions
+            t for t in normalized
             if current_time - t.timestamp <= self.time_window
         ]
         
@@ -248,6 +275,46 @@ class VelocityCalculator:
             return 0.0
         
         return total_amount / total_time
+
+    def _normalize_transactions(self, transactions) -> List[Transaction]:
+        """Normalize lists, dicts, and DataFrames to Transaction records."""
+        if transactions is None:
+            return []
+
+        if isinstance(transactions, pd.DataFrame):
+            records = transactions.to_dict(orient='records')
+        else:
+            records = list(transactions)
+
+        normalized = []
+        for index, txn in enumerate(records):
+            if isinstance(txn, Transaction):
+                normalized.append(txn)
+                continue
+
+            source = txn.get('source') or txn.get('from') or txn.get('from_account') or txn.get('account_id') or txn.get('source_account') or f'SRC_{index}'
+            target = txn.get('target') or txn.get('to') or txn.get('to_account') or txn.get('target_account') or f'TGT_{index}'
+            amount = float(txn.get('amount', 0.0))
+            timestamp = float(txn.get('timestamp', index))
+            txn_id = txn.get('txn_id') or txn.get('transaction_id') or f'txn_{index}'
+            normalized.append(Transaction(source=source, target=target, amount=amount, timestamp=timestamp, txn_id=txn_id))
+
+        return normalized
+
+    def _burst_score_from_windows(self, recent: List[Transaction], baseline: List[Transaction]) -> float:
+        """Return a scalar burst score for compatibility callers."""
+        if not recent:
+            return 0.0
+        current_time = max(t.timestamp for t in recent)
+        recent_window = [t for t in recent if current_time - t.timestamp <= self.burst_window]
+        baseline_window = baseline if baseline else recent
+        burst_count = len(recent_window)
+        baseline_count = len(baseline_window)
+        burst_rate = burst_count / self.burst_window if burst_count > 0 else 0.0
+        baseline_rate = baseline_count / self.time_window if baseline_count > 0 else 0.0
+        if baseline_rate > 0:
+            return float(burst_rate / baseline_rate)
+        return float(burst_rate * 10)
     
     def compute_all_features(
         self,

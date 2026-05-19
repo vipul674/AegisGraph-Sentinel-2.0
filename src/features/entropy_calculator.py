@@ -31,6 +31,38 @@ class GraphEntropyCalculator:
     
     def __init__(self, neighborhood_size: int = 2):
         self.neighborhood_size = neighborhood_size
+
+    def calculate_neighbor_entropy(self, graph: nx.Graph, node: str) -> float:
+        """Compatibility wrapper used by tests and legacy code."""
+        if graph is None or not graph.has_node(node):
+            return 0.0
+
+        if graph.is_directed():
+            in_count = len(set(graph.predecessors(node)))
+            out_count = len(set(graph.successors(node)))
+            counts = [count for count in (in_count, out_count) if count > 0]
+            if len(counts) < 2:
+                return float(np.log2(sum(counts) + 1)) if counts else 0.0
+            total = float(sum(counts))
+            probs = [count / total for count in counts]
+            return float(-sum(p * math.log2(p) if p > 0 else 0 for p in probs))
+        else:
+            neighbors = set(graph.neighbors(node))
+
+            if not neighbors:
+                return 0.0
+
+            neighbor_degrees = [graph.degree(neighbor) for neighbor in neighbors]
+
+            if len(neighbor_degrees) < 2:
+                return 0.0
+
+            bins = [0, 1, 5, 10, 50, 100, float('inf')]
+            binned_degrees = np.digitize(neighbor_degrees, bins)
+            counts = Counter(binned_degrees)
+            total = len(neighbor_degrees)
+            probs = [count / total for count in counts.values()]
+            return float(-sum(p * math.log2(p) if p > 0 else 0 for p in probs))
     
     def compute_neighbor_entropy(
         self,

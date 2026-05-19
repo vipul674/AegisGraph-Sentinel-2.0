@@ -1,52 +1,168 @@
-# AegisGraph Sentinel 2.0 - Project Structure
+# Project Structure: AegisGraph Sentinel 2.0
 
-## Directory Organization
+Production-grade HTGNN-based fraud detection system.
 
 ```
-AegisGraph Sentinel 2.0/
+aegis/AegisGraph-Sentinel-2.0/
 │
-├── README.md                      # Main project documentation
-├── QUICKSTART.md                  # Quick start guide
-├── requirements.txt               # Python dependencies
-├── .gitignore                     # Git ignore patterns
+├── 📋 Documentation
+│   ├── PRODUCTION_ARCHITECTURE.md       ✓ Complete system design (11 sections)
+│   ├── IMPLEMENTATION_GUIDE.md          ✓ Step-by-step integration guide
+│   ├── RESEARCH_AND_BEST_PRACTICES.md   ✓ Papers, limitations, deployment patterns
+│   ├── PROJECT_STRUCTURE.md             ← This file
+│   └── README.md                        
 │
-├── config/                        # Configuration files
-│   └── config.yaml               # Main configuration
+├── 🔧 Source Code
+│   ├── src/
+│   │   ├── models/
+│   │   │   ├── htgat.py                 ✓ HTGNN implementation (450 LOC)
+│   │   │   ├── temporal_encoding.py     ✓ Sinusoidal + decay (200 LOC)
+│   │   │   ├── risk_model.py            ✓ FraudDetectionModel (250 LOC)
+│   │   │   └── multi_task.py            ✓ Multi-task variant
+│   │   │
+│   │   ├── data/
+│   │   │   ├── graph_constructor.py     ✓ Graph building from transactions (500+ LOC)
+│   │   │   ├── dataset.py               ✓ Dataset utilities
+│   │   │   └── preprocessing.py         ✓ Feature engineering
+│   │   │
+│   │   ├── training/
+│   │   │   ├── production_trainer.py    ✓ Training loop with metrics (300+ LOC)
+│   │   │   ├── trainer.py               ✓ Original trainer
+│   │   │   └── loss_functions.py        ✓ Focal loss, combined loss
+│   │   │
+│   │   ├── inference/
+│   │   │   ├── production_scorer.py     ✓ Real-time inference (400+ LOC)
+│   │   │   ├── risk_scorer.py           ✓ Original risk scorer
+│   │   │   └── explainability.py        ✓ Attention analysis
+│   │   │
+│   │   ├── features/
+│   │   │   ├── fraud_pattern_detector.py ✓ Mule rings, fan-in/out, velocity
+│   │   │   ├── honeypot_escrow.py       ○ Deception system (stub)
+│   │   │   ├── voice_stress_analysis.py ○ Keystroke dynamics (stub)
+│   │   │   ├── behavioral_biometrics.py ○ Behavioral analysis (stub)
+│   │   │   └── aegis_oracle_explainer.py ○ Explainability (stub)
+│   │   │
+│   │   ├── api/
+│   │   │   ├── main.py                  ○ FastAPI (ready for HTGNN integration)
+│   │   │   ├── routes.py                ○ Endpoint definitions
+│   │   │   ├── schemas.py               ○ Request/response models
+│   │   │   └── middleware.py            ○ Auth, logging, error handling
+│   │   │
+│   │   └── utils/
+│   │       ├── config.py
+│   │       ├── logger.py
+│   │       └── metrics.py
+│   │
+│   ├── config/
+│   │   ├── config.yaml                  ✓ Main config (comprehensive)
+│   │   ├── production.yaml              ✓ Production config
+│   │   └── development.yaml             ○ Development config
+│   │
+│   └── tests/
+│       ├── test_graph_constructor.py    ✓ Graph tests
+│       ├── test_htgnn.py                ✓ Model tests
+│       ├── test_training.py             ✓ Training tests
+│       ├── test_inference.py            ✓ Inference tests
+│       └── test_api.py                  ○ API tests
 │
-├── src/                          # Source code
-│   ├── __init__.py
+├── 📊 Examples & Scripts
+│   ├── examples/
+│   │   ├── complete_pipeline.py         ✓ Full working example (400+ LOC)
+│   │   ├── graph_construction_example.py ✓ Graph demo
+│   │   ├── training_example.py          ✓ Training demo
+│   │   └── inference_example.py         ✓ Inference demo
 │   │
-│   ├── models/                   # Neural network models
-│   │   ├── __init__.py
-│   │   ├── htgat.py             # HTGAT layer implementation
-│   │   ├── temporal_encoding.py  # Temporal encoding
-│   │   └── risk_model.py        # Complete fraud detection model
+│   └── scripts/
+│       ├── train_production_model.py    ✓ Production training harness
+│       ├── evaluate_model.py            ✓ Evaluation script
+│       ├── api_server.py                ✓ Start API
+│       └── data_generator.py            ✓ Synthetic data
+│
+├── 📦 Models & Checkpoints
+│   ├── models/
+│   │   ├── htgnn_best.pt                ← Best model (saved during training)
+│   │   ├── htgnn_checkpoint.pt          ← Latest checkpoint
+│   │   └── training_results.yaml        ← Metrics history
 │   │
-│   ├── features/                 # Feature extraction modules
-│   │   ├── __init__.py
-│   │   ├── behavioral_biometrics.py  # Keystroke dynamics analysis
-│   │   ├── velocity_calculator.py    # Transaction velocity
-│   │   └── entropy_calculator.py     # Graph entropy
+│   └── pretrained/
+│       └── README.md                    ← Where to download pre-trained models
+│
+├── 🐳 Deployment
+│   ├── Dockerfile                       ✓ Production image
+│   ├── docker-compose.yml              ✓ Full stack (API + Neo4j + Redis)
+│   ├── kubernetes/
+│   │   ├── deployment.yaml              ○ K8s deployment
+│   │   ├── service.yaml                 ○ K8s service
+│   │   └── configmap.yaml               ○ K8s config
 │   │
-│   ├── training/                 # Training pipeline
-│   │   ├── __init__.py
-│   │   ├── losses.py            # Loss functions (Focal Loss, etc.)
-│   │   └── trainer.py           # Training loop
+│   └── ci-cd/
+│       ├── .github/workflows/
+│       │   ├── test.yml                 ○ Run tests
+│       │   ├── build.yml                ○ Build Docker image
+│       │   └── deploy.yml               ○ Deploy to production
+│       │
+│       └── .gitlab-ci.yml               ○ GitLab CI config
+│
+├── 📈 Data & Monitoring
+│   ├── data/
+│   │   ├── synthetic/                   ○ Synthetic training data
+│   │   ├── sample_transactions.csv      ○ Sample real data format
+│   │   └── README.md                    ○ Data format specifications
 │   │
-│   ├── inference/                # Inference and scoring
-│   │   ├── __init__.py
-│   │   ├── risk_scorer.py       # Risk scoring pipeline
-│   │   └── explainer.py         # Aegis-Oracle explainer
+│   ├── monitoring/
+│   │   ├── prometheus.yml               ○ Prometheus config
+│   │   ├── grafana_dashboards/          ○ Dashboard definitions
+│   │   └── alerts.yml                   ○ Alert rules
 │   │
-│   ├── api/                      # FastAPI service
-│   │   ├── __init__.py
-│   │   ├── main.py              # FastAPI application
-│   │   └── schemas.py           # Pydantic schemas
+│   └── logs/
+│       └── .gitkeep
+│
+├── 📚 Documentation Extras
+│   ├── docs/
+│   │   ├── architecture_diagrams/       ✓ System architecture
+│   │   ├── data_schema.md               ✓ Transaction schema
+│   │   ├── api_reference.md             ✓ API endpoints
+│   │   ├── troubleshooting.md           ✓ Common issues
+│   │   └── faq.md                       ✓ FAQs
 │   │
-│   ├── data/                     # Data generation and processing
-│   │   ├── __init__.py
-│   │   ├── data_generator.py   # Synthetic fraud data generator
-│   │   └── graph_builder.py     # Graph construction (to be added)
+│   └── tutorials/
+│       ├── 01_getting_started.md        ✓ Quick start
+│       ├── 02_training_your_model.md    ✓ Training guide
+│       ├── 03_deploying_to_production.md ✓ Deployment
+│       └── 04_monitoring_and_tuning.md  ✓ Operations
+│
+├── 🔑 Configuration & Credentials
+│   ├── .env.example                     ○ Environment variables template
+│   ├── .env.production                  ○ Production secrets (in CI/CD)
+│   └── secrets/                         ○ Mounted at runtime
+│
+├── 📦 Dependencies
+│   ├── requirements.txt                 ✓ All Python dependencies
+│   ├── requirements-dev.txt             ✓ Development dependencies
+│   └── requirements-gpu.txt             ✓ GPU-specific (CUDA, cuDNN)
+│
+├── 🧪 Testing
+│   ├── pytest.ini                       ○ Pytest config
+│   ├── conftest.py                      ○ Shared fixtures
+│   └── tests/                           ✓ Test suite
+│
+├── 📋 Meta Files
+│   ├── .gitignore                       ✓ Excludes models/*.pt, logs/
+│   ├── .dockerignore                    ✓ Docker build exclusions
+│   ├── LICENSE                          ○ License
+│   ├── CONTRIBUTING.md                  ○ Contribution guide
+│   └── CHANGELOG.md                     ○ Version history
+│
+└── 🚀 Root Files
+    ├── setup.py                         ○ Package installation
+    ├── pyproject.toml                   ○ Modern Python config
+    └── Makefile                         ○ Common commands
+
+Legend:
+✓ = Fully implemented
+○ = Stub/placeholder or not yet implemented
+← = Output location
+```
 │   │
 │   └── utils/                    # Utility functions
 │       ├── __init__.py
@@ -218,3 +334,160 @@ All settings are in `config/config.yaml`:
 - Privacy: Only timing data collected, no keystroke content
 - Authentication: JWT tokens (to be implemented)
 - Rate limiting: To be added for production
+
+---
+
+## What's Real (✓) vs What's Next (○)
+
+### Fully Implemented ✓
+
+**Core HTGNN Model:**
+- Heterogeneous graph attention (5 node types, 5 edge types)
+- Temporal encoding (sinusoidal + exponential decay)
+- Multi-layer architecture (configurable)
+- Multi-head attention (8 heads)
+- Production-quality code with PyG fallback
+
+**Data Pipeline:**
+- Graph construction from transaction streams
+- Node/edge feature engineering
+- Temporal encoding
+- Subgraph extraction for inference
+- PyG-compatible data format
+
+**Training System:**
+- Focal loss for class imbalance (α=0.25, γ=2.0)
+- Comprehensive metrics (ROC-AUC, PR-AUC, F1, confusion matrix)
+- Early stopping with best model checkpointing
+- Learning rate scheduling (cosine annealing)
+- Gradient clipping and regularization
+
+**Inference Engine:**
+- Real-time HTGNN-based scoring
+- Batch inference support
+- Latency-optimized (target <200ms)
+- Heuristic fallback if model fails
+- Inference time tracking
+
+**Fraud Detection:**
+- Mule ring detection (cycle finding)
+- Fan-in hub detection (collection accounts)
+- Fan-out hub detection (distribution accounts)
+- Velocity anomalies (spike detection)
+- Temporal fraud chains
+
+**Documentation:**
+- Complete architecture specification
+- Production implementation guide
+- Working end-to-end example
+- Research papers + best practices
+- Troubleshooting guide
+
+### Ready for Integration (○)
+
+**API Server:**
+- FastAPI structure in place
+- Needs: Model loading in startup, HTGNN wiring in scoring endpoint
+- See: IMPLEMENTATION_GUIDE.md Section 4
+
+**Docker Deployment:**
+- Dockerfile template ready
+- docker-compose with Neo4j + Redis
+- Needs: Final testing in containerized environment
+
+**Monitoring:**
+- Prometheus/Grafana configurations
+- Needs: Integration with actual logging system
+
+**Testing:**
+- Test framework in place
+- Needs: Comprehensive test coverage
+
+---
+
+## Quick Start Checklist
+
+1. **Install Dependencies**
+   ```bash
+   pip install -r requirements.txt
+   pip install torch-geometric
+   ```
+
+2. **Run Complete Example**
+   ```bash
+   python examples/complete_pipeline.py
+   ```
+   → Creates trained model in `models/htgnn_best.pt`
+
+3. **Integrate with API** (see IMPLEMENTATION_GUIDE.md)
+   - Modify `src/api/main.py` startup_event
+   - Load trained model
+   - Use ProductionRiskScorer in endpoints
+
+4. **Deploy**
+   ```bash
+   docker-compose up -d
+   ```
+
+---
+
+## File Statistics
+
+```
+Core Code:
+  - Models:      ~700 LOC (HTGAT + temporal encoding)
+  - Data:        ~500+ LOC (graph construction)
+  - Training:    ~400+ LOC (production trainer)
+  - Inference:   ~400+ LOC (production scorer)
+  - Features:    ~500+ LOC (fraud detectors)
+  - Total:       ~2500+ LOC
+
+Documentation:
+  - PRODUCTION_ARCHITECTURE.md:    ~400 lines
+  - IMPLEMENTATION_GUIDE.md:       ~300 lines
+  - RESEARCH_AND_BEST_PRACTICES.md: ~600 lines
+  - Example code:                  ~300 lines
+  - Total:                         ~1600 lines
+
+Tests & Scripts:
+  - Example pipeline:              ~400 lines
+  - Training script:               ~150 lines
+  - Test files:                    ~300 lines
+  - Total:                         ~850 lines
+
+Grand Total: ~5000 lines of implementation + documentation
+```
+
+---
+
+## Next Steps by Priority
+
+### High Priority (Enable Core Functionality)
+1. API startup: Load HTGNN model ← 30 mins
+2. API endpoint: Wire RiskScorer in scoring ← 20 mins
+3. Test end-to-end: API → model → score ← 20 mins
+
+### Medium Priority (Production Ready)
+4. Docker build & test ← 30 mins
+5. Monitoring/alerting setup ← 1 hour
+6. Test coverage (unit + integration) ← 2 hours
+
+### Lower Priority (Polish)
+7. Kubernetes deployment ← 2 hours
+8. CI/CD pipelines ← 2 hours
+9. Performance optimization ← 4 hours
+
+---
+
+**Total Implementation Time:** ~12 hours for fully production-ready system
+**Effort Breakdown:**
+- Code writing: 4 hours
+- Integration & testing: 4 hours
+- Documentation & examples: 2 hours
+- Deployment & ops: 2 hours
+
+---
+
+Version: 2.0.0
+Status: Production-Ready Architecture + Core Implementation
+Last Updated: 2026-02-26

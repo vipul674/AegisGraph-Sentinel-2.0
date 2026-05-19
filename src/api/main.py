@@ -642,6 +642,9 @@ async def get_stats():
         avg_risk_score=avg_risk,
         avg_processing_time_ms=avg_time,
         uptime_seconds=uptime,
+        total_checks=state.requests_processed,
+        flagged_transactions=state.decisions.get("BLOCK", 0) + state.decisions.get("REVIEW", 0),
+        average_response_time=avg_time,
     )
 
 
@@ -807,10 +810,13 @@ async def check_transaction(request: TransactionCheckRequest):
         state.total_processing_time += processing_time_ms
         
         # Prepare response with innovation fields
+        decision_map = {'ALLOW': 'approve', 'REVIEW': 'review', 'BLOCK': 'block'}
+        decision = decision_map.get(risk_result['decision'], risk_result['decision'].lower())
         response = TransactionCheckResponse(
             transaction_id=request.transaction_id,
             risk_score=risk_result['risk_score'],
-            decision=risk_result['decision'],
+            decision=decision,
+            factors={**risk_result['breakdown'], 'behavioral': float(behavioral_stress_detected)},
             confidence=risk_result['confidence'],
             breakdown=RiskBreakdown(**risk_result['breakdown']),
             explanation=explanation_result['explanation'],
@@ -994,7 +1000,7 @@ async def check_batch_transactions(request: BatchTransactionRequest):
             # Process each transaction
             result = await check_transaction(txn_request)
             results.append(result)
-            stats[result.decision] += 1
+            stats[result.decision.upper()] += 1
         except Exception as e:
             # Handle individual transaction errors
             print(f"Error processing {txn_request.transaction_id}: {e}")

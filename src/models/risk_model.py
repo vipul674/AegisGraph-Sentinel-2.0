@@ -95,10 +95,11 @@ class FraudDetectionModel(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        edge_index: torch.LongTensor,
-        node_type: torch.LongTensor,
-        edge_type: torch.LongTensor,
-        edge_timestamp: torch.Tensor,
+        edge_index: Optional[torch.LongTensor] = None,
+        node_type: Optional[torch.LongTensor] = None,
+        edge_type: Optional[torch.LongTensor] = None,
+        edge_timestamp: Optional[torch.Tensor] = None,
+        edge_attr: Optional[torch.Tensor] = None,
         batch: Optional[torch.LongTensor] = None,
         return_embedding: bool = False,
     ) -> Dict[str, torch.Tensor]:
@@ -120,8 +121,29 @@ class FraudDetectionModel(nn.Module):
                 - 'embedding': (Optional) Node embeddings
                 - 'graph_embedding': Graph-level embedding
         """
-        # Encode temporal information
-        edge_attr = self.temporal_encoder(edge_timestamp)
+        if edge_index is None and hasattr(x, "edge_index"):
+            data = x
+            x = data.x
+            edge_index = data.edge_index
+            node_type = getattr(data, "node_type", node_type)
+            edge_type = getattr(data, "edge_type", edge_type)
+            edge_attr = getattr(data, "edge_attr", edge_attr)
+            edge_timestamp = getattr(data, "edge_timestamp", edge_timestamp)
+            batch = getattr(data, "batch", batch)
+        elif isinstance(x, dict):
+            data = x
+            x = data["x"]
+            edge_index = data["edge_index"]
+            node_type = data.get("node_type", node_type)
+            edge_type = data.get("edge_type", edge_type)
+            edge_attr = data.get("edge_attr", edge_attr)
+            edge_timestamp = data.get("edge_timestamp", edge_timestamp)
+            batch = data.get("batch", batch)
+
+        if edge_attr is None:
+            if edge_timestamp is None:
+                raise ValueError("FraudDetectionModel.forward requires edge_attr or edge_timestamp")
+            edge_attr = self.temporal_encoder(edge_timestamp)
         
         # Apply HTGAT
         node_embeddings = self.htgat(
