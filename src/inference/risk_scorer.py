@@ -543,18 +543,34 @@ def compute_risk_score(
         0.10 * entropy_risk
     )
     
+    # Load thresholds consistently
+    try:
+        from ..utils.helpers import load_thresholds
+        threshold_config = load_thresholds('config/thresholds.yaml', validate=False)
+        rs = threshold_config.get('risk_scoring', {})
+        threshold_block = rs.get('block', 0.90)
+        threshold_review = rs.get('review', 0.70)
+    except Exception:
+        threshold_block = 0.90
+        threshold_review = 0.70
+        
     # Make decision
-    if risk_score >= 0.70:
+    if risk_score >= threshold_block:
         decision = 'BLOCK'
-    elif risk_score >= 0.40:
+    elif risk_score >= threshold_review:
         decision = 'REVIEW'
     else:
         decision = 'ALLOW'
+        
+    # Compute confidence dynamically (based on variance of components)
+    values = list(breakdown.values())
+    variance = np.var(values) if values else 0
+    confidence = 1.0 / (1.0 + 5 * variance)
     
     return {
         'risk_score': risk_score,
         'decision': decision,
-        'confidence': 0.85,
+        'confidence': float(confidence),
         'breakdown': breakdown,
         'lateral_movement_detected': lateral_movement_detected,
         'lateral_movement_reason': lateral_movement_reason,
