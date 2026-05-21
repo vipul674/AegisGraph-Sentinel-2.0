@@ -8,6 +8,8 @@ python test_all_innovations_comprehensive.py
 """
 # Working on comprehensive innovation testing
 
+import logging
+logger = logging.getLogger(__name__)
 import requests
 import json
 import time
@@ -395,7 +397,8 @@ def main():
             requests.get(f"{API_URL}/api/v1/health", timeout=2)
             print("✅ API is ready")
             break
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             time.sleep(1)
     
     # Run all tests

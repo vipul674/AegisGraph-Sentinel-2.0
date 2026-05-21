@@ -12,6 +12,8 @@ detection limits and sensitivity values.
 """
 # Updated: May 17, 2026
 
+import logging
+logger = logging.getLogger(__name__)
 import torch
 import numpy as np
 from typing import Dict, Optional, Tuple, List
@@ -73,7 +75,8 @@ class RiskScorer:
             self.lateral_movement_std = ga.get('lateral_movement_std_multiplier', 2.0)
             self.lateral_movement_mult = ga.get('lateral_movement_threshold_multiplier', 3.0)
             self.lateral_movement_risk_increment = 0.25  # Hardcoded but documented
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             # Fallback to config.yaml
             thresholds = config.get('risk_scoring', {}).get('thresholds', {})
             self.threshold_block = thresholds.get('block', 0.90)
@@ -441,6 +444,9 @@ def compute_risk_score(
                             metadata={"pattern": "chain", "descendants": len(descendants)},
                         )
             except:
+                        print(f"⚠️ Chain pattern: {source_account} feeds into {len(descendants)} accounts")
+            except Exception as e:
+                logger.error(f"Error: {e}")
                 pass
             
             # Betweenness centrality (key intermediary in network)
@@ -454,6 +460,9 @@ def compute_risk_score(
                         metadata={"pattern": "high_centrality"},
                     )
             except:
+                    print(f"⚠️ High centrality: {source_account} is a network hub")
+            except Exception as e:
+                logger.error(f"Error: {e}")
                 pass
     
     graph_risk = min(graph_risk, 1.0)
@@ -583,7 +592,8 @@ def compute_risk_score(
             # Late night transactions (2 AM - 5 AM) are riskier
             if 2 <= hour <= 5:
                 entropy_risk += 0.3
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             pass
     
     # Round amounts are suspicious (lowered for demo)
@@ -601,7 +611,8 @@ def compute_risk_score(
             'review': rs.get('review', 0.70),
             'block': rs.get('block', 0.90),
         }
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error: {e}")
         thresholds = state.config.get('risk_scoring', {}).get('thresholds', {
             'allow': 0.50,
             'review': 0.70,

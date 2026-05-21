@@ -4,6 +4,8 @@ Real-time Fraud Detection Interface
 """
 # Updated: May 17, 2026
 
+import logging
+logger = logging.getLogger(__name__)
 import streamlit as st
 import requests
 import json
@@ -12,6 +14,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
+from datetime import timezone
 import time #ready to deploy
 
 # Page configuration
@@ -22,8 +25,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+import os
+
 # API Configuration
-API_URL = "http://localhost:8080"
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 # Custom CSS
 st.markdown("""
@@ -188,7 +193,8 @@ with st.sidebar:
             st.info(mode)
         else:
             st.error("⚠️ API Issue")
-    except:
+    except Exception as e:
+        logger.error(f"Error: {e}")
         st.error("❌ API Offline")
         st.warning("Start API: `python -m uvicorn src.api.main:app --reload`")
 
@@ -265,7 +271,7 @@ if page == "🧭 Command Center":
                         "amount": float(current_amount),
                         "currency": "INR",
                         "mode": current_mode,
-                        "timestamp": datetime.utcnow().isoformat() + "Z"
+                        "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
                     }
 
                     try:
@@ -394,7 +400,7 @@ elif page == "💳 Transaction Scan":
                     "amount": float(amount),
                     "currency": currency,
                     "mode": mode,
-                    "timestamp": datetime.utcnow().isoformat() + "Z"
+                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
                 }
                 
                 if device_id:
@@ -511,7 +517,7 @@ elif page == "📁 Batch Triage":
                         "amount": float(row.get('amount', 0)),
                         "currency": str(row.get('currency', 'INR')),
                         "mode": str(row.get('mode', 'UPI')),
-                        "timestamp": str(row.get('timestamp', datetime.utcnow().isoformat() + "Z"))
+                        "timestamp": str(row.get('timestamp', datetime.now(timezone.utc).isoformat() + "Z"))
                     }
                     
                     # Add optional fields if present in CSV
@@ -1221,7 +1227,7 @@ elif page == "🧪 Innovation Lab":
                     "amount": 1,
                     "currency": "INR",
                     "mode": "UPI",
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
                     "biometrics": {"hold_times": hold_times, "flight_times": flight_times}
                 }
                 resp = requests.post(f"{API_URL}/api/v1/fraud/check", json=payload, timeout=10)

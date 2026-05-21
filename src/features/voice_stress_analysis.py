@@ -240,7 +240,8 @@ class VoiceStressAnalyzer:
                 f0_mean, f0_std, f0_range = 120.0, 10.0, 50.0
             
             return f0_mean, f0_std, f0_range
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             return 120.0, 10.0, 50.0
     
     def _compute_jitter(
@@ -274,7 +275,8 @@ class VoiceStressAnalyzer:
                 return float(jitter)
             else:
                 return 0.005  # Normal baseline
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             return 0.005
     
     def _compute_shimmer(
@@ -306,7 +308,8 @@ class VoiceStressAnalyzer:
                 return float(shimmer)
             else:
                 return 0.05  # Normal baseline
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             return 0.05
     
     def _estimate_speech_rate(
@@ -337,7 +340,8 @@ class VoiceStressAnalyzer:
             syllables_per_sec = len(peaks) / duration
             
             return float(syllables_per_sec)
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             return 4.5  # Normal baseline
     
     def _compute_prosody_entropy(
@@ -366,7 +370,8 @@ class VoiceStressAnalyzer:
             entropy = -np.sum(hist * np.log(hist + 1e-10))
             
             return float(entropy)
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             return 3.0
     
     def _compute_snr(self, audio: np.ndarray) -> float:
@@ -390,7 +395,8 @@ class VoiceStressAnalyzer:
             
             snr = 10 * np.log10((signal_power / (noise_power + 1e-10)))
             return float(max(snr, 0))
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             return 20.0  # Normal SNR
     
     def _detect_multiple_speakers(
@@ -414,7 +420,8 @@ class VoiceStressAnalyzer:
                 return 2  # Multiple speakers detected
             else:
                 return 1  # Single speaker
-        except:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             return 1
     
     def _mock_features(self) -> VoiceFeatures:

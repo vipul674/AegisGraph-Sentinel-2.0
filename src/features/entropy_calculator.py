@@ -9,6 +9,8 @@ Key concept:
 """
 # Working on entropy-based anomaly detection
 
+import logging
+logger = logging.getLogger(__name__)
 import numpy as np
 import networkx as nx
 from typing import Dict, List, Optional, Set
@@ -250,7 +252,8 @@ class GraphEntropyCalculator:
             subgraph = graph.subgraph([node] + list(neighbors))
             try:
                 local_eff = nx.local_efficiency(subgraph)
-            except:
+            except Exception as e:
+                logger.error(f"Error: {e}")
                 local_eff = 0.0
             
             # Structural entropy based on edge distribution

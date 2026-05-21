@@ -300,8 +300,9 @@ class PredictiveMuleScorer:
         # Simple heuristic: check if IP is VPN/proxy
         ip = account_data.ip_address
         
-        # Common VPN/proxy ranges (simplified)
-        suspicious_patterns = ['10.', '172.16.', '192.168.']
+        # Removed RFC 1918 private IPs (caused false positives for NAT users)
+        # TODO: Implement proper GeoIP or threat intelligence lookup for VPN/proxy detection
+        suspicious_patterns = []
         
         if any(ip.startswith(p) for p in suspicious_patterns):
             return 70.0
