@@ -1367,7 +1367,7 @@ async def get_model_info():
     summary="Analyze voice stress during transaction",
     description="Innovation 5: Detects phone coercion through acoustic stress analysis"
 )
-async def analyze_voice(request: VoiceAnalysisRequest):
+def analyze_voice(request: VoiceAnalysisRequest):
     """
     Analyze voice recording for stress and coercion indicators
     
@@ -1424,7 +1424,7 @@ async def analyze_voice(request: VoiceAnalysisRequest):
     summary="Score account opening for mule risk",
     description="Innovation 4: Predicts mule accounts before first transaction using 12 features"
 )
-async def score_account_opening(request: AccountOpeningRequest):
+def score_account_opening(request: AccountOpeningRequest):
     """
     Score a new account opening for mule recruitment risk
     
