@@ -157,6 +157,7 @@ try:
     from ..features.honeypot_escrow import HoneypotEscrowManager
     from ..features.blockchain_evidence import BlockchainEvidenceManager
     from ..features.aegis_oracle_explainer import AegisOracleExplainer
+    from ..features.lateral_movement import LateralMovementDetector
     INNOVATIONS_AVAILABLE = True
 except (ImportError, SyntaxError) as e:
     _api_logger.warning(
@@ -265,6 +266,8 @@ except (ImportError, SyntaxError) as e:
                 except Exception as e:
                     logger.error(f"Error in graph pattern analysis: {e}")
                     pass
+                except:
+                    print(f"⚠️ Chain pattern: {source_account} is part of a {chain_length}-hop chain")
         
         graph_risk = min(graph_risk, 1.0)
         breakdown['graph'] = graph_risk
@@ -501,6 +504,7 @@ class AppState:
         self.honeypot_manager = None
         self.blockchain_manager = None
         self.aegis_oracle = None  # Explainability engine
+        self.lateral_movement_detector = None
         
 state = AppState()
 
@@ -520,6 +524,7 @@ async def _honeypot_auto_release_loop(interval_seconds: int = 60):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _startup_logger = get_logger("api.startup")
     """
     Application lifespan. Initialises services and config on startup,
     tracks background tasks, and cancels them cleanly on shutdown.
@@ -694,6 +699,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             _startup_logger.warning(
                 f"Aegis-Oracle initialization failed: {e}",
+                event_type="innovation_init_failed",
+            )
+        
+        try:
+            state.lateral_movement_detector = LateralMovementDetector()
+            _startup_logger.info("Lateral Movement Detector initialized", event_type="innovation_ready")
+        except Exception as e:
+            _startup_logger.warning(
+                f"Lateral movement initialization failed: {e}",
                 event_type="innovation_init_failed",
             )
     else:
@@ -922,6 +936,39 @@ async def check_transaction(request: TransactionCheckRequest):
             biometrics=biometrics,
         )
         
+        # --- NEW: LATERAL MOVEMENT INTEGRATION ---
+        if INNOVATIONS_AVAILABLE and state.lateral_movement_detector:
+            try:
+                # 1. Update the live temporal graph
+                state.lateral_movement_detector.update_graph(
+                    request.source_account,
+                    request.target_account
+                )
+                
+                # 2. Analyze the source account for centrality spikes
+                lm_risk_added, is_pivoting = state.lateral_movement_detector.analyze_account(
+                    request.source_account
+                )
+
+                # 3. Apply penalty if attacker is pivoting
+                if is_pivoting:
+                    current_score = risk_result.get('risk_score', 0.0)
+                    new_score = min(1.0, current_score + lm_risk_added)
+                    
+                    risk_result['risk_score'] = new_score
+                    risk_result['breakdown']['lateral_movement'] = lm_risk_added
+                    risk_result['lateral_movement_detected'] = True
+                    risk_result['lateral_movement_reason'] = "MITRE TA0008: Rapid centrality spike indicating network pivoting."
+                    
+                    # Escalate decision if thresholds are crossed
+                    if new_score >= 0.7:
+                        risk_result['decision'] = 'BLOCK'
+                    elif new_score >= 0.4 and risk_result['decision'] == 'ALLOW':
+                        risk_result['decision'] = 'REVIEW'
+            except Exception as e:
+                _api_logger.warning(f"Lateral movement check failed: {e}", event_type="lateral_movement_error")
+        # -----------------------------------------
+
         # Generate explanation
         explanation_result = generate_explanation(
             transaction=transaction,
