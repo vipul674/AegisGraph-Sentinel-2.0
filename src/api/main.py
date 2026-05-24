@@ -1671,7 +1671,7 @@ async def export_legal_evidence(request: LegalExportRequest):
         raise HTTPException(status_code=503, detail="Blockchain system not available")
     
     try:
-        result = state.blockchain_manager.export_for_legal(
+        result = state.blockchain_manager.export_for_legal_proceedings(
             evidence_id=request.evidence_id,
             case_number=request.case_number,
             requesting_authority=request.requesting_authority,
