@@ -12,6 +12,7 @@ Real-time fraud detection API service
 import logging
 logger = logging.getLogger(__name__)
 import hashlib
+import asyncio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -1450,20 +1451,36 @@ async def check_batch_transactions(request: BatchTransactionRequest):
     
     results = []
     stats = {"ALLOW": 0, "REVIEW": 0, "BLOCK": 0}
-    
-    for txn_request in request.transactions:
-        try:
-            # Process each transaction
-            result = await check_transaction(txn_request)
-            results.append(result)
-            stats[result.decision.upper()] += 1
-        except Exception as e:
-            # Handle individual transaction errors
+
+    semaphore = asyncio.Semaphore(8)
+    # Lock the iterator into memory so we can read it twice
+    txns = list(request.transactions)
+
+    async def _process_transaction(txn_request):
+        async with semaphore:
+            return await check_transaction(txn_request)
+
+    batch_results = await asyncio.gather(
+        *(_process_transaction(txn_request) for txn_request in txns),
+        return_exceptions=True,
+    )
+
+    # Iterate over our locked list, not the raw request stream
+    for txn_request, result in zip(txns, batch_results):
+        if isinstance(result, Exception):
             _api_logger.error(
-                f"Error processing batch transaction {txn_request.transaction_id}: {e}",
+                f"Error processing batch transaction {txn_request.transaction_id}: {result}",
                 event_type="batch_processing_error",
             )
             continue
+
+        results.append(result)
+        decision_key = str(result.decision).upper()
+        if decision_key == "APPROVE":
+            decision_key = "ALLOW"
+        if decision_key not in stats:
+            decision_key = "ALLOW"
+        stats[decision_key] += 1
     
     processing_time_ms = (time.time() - start_time) * 1000
     
