@@ -1358,21 +1358,29 @@ async def check_batch_transactions(request: BatchTransactionRequest):
     start_time = time.time()
     
     results = []
-    stats = {"ALLOW": 0, "REVIEW": 0, "BLOCK": 0}
-    
-    for txn_request in request.transactions:
-        try:
-            # Process each transaction
-            result = await check_transaction(txn_request)
+        stats = {"ALLOW": 0, "REVIEW": 0, "BLOCK": 0}
+
+        semaphore = asyncio.Semaphore(8)
+
+        async def _process_transaction(txn_request):
+            async with semaphore:
+                return await check_transaction(txn_request)
+
+        batch_results = await asyncio.gather(
+            *(_process_transaction(txn_request) for txn_request in request.transactions),
+            return_exceptions=True,
+        )
+
+        for txn_request, result in zip(request.transactions, batch_results):
+            if isinstance(result, Exception):
+                _api_logger.error(
+                    f"Error processing batch transaction {txn_request.transaction_id}: {result}",
+                    event_type="batch_processing_error",
+                )
+                continue
+
             results.append(result)
             stats[result.decision.upper()] += 1
-        except Exception as e:
-            # Handle individual transaction errors
-            _api_logger.error(
-                f"Error processing batch transaction {txn_request.transaction_id}: {e}",
-                event_type="batch_processing_error",
-            )
-            continue
     
     processing_time_ms = (time.time() - start_time) * 1000
     
