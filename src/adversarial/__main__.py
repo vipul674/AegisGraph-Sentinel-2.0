@@ -38,8 +38,9 @@ def load_model(checkpoint_path: Path) -> torch.nn.Module:
         num_node_types=5, num_edge_types=4,
         num_layers=2, heads=4, dropout=0.3,
     )
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    model_state = ckpt.get("model_state_dict", ckpt)
+    model.load_state_dict(model_state)
     return model
 
 
