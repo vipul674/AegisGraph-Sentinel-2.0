@@ -210,6 +210,15 @@ class BlockchainNode:
         # Check block number
         if block['block_number'] != len(self.chain):
             return False
+
+        expected_hash = self._compute_hash(
+            f"block_{block['block_number']}",
+            block['previous_hash'],
+            block.get('transactions', []),
+            block['timestamp'],
+        )
+        if block.get('hash') != expected_hash:
+            return False
         
         return True
     
@@ -226,6 +235,15 @@ class BlockchainNode:
             previous = self.chain[i-1]
             
             if current['previous_hash'] != previous['hash']:
+                return False
+
+            expected_hash = self._compute_hash(
+                f"block_{current['block_number']}",
+                current['previous_hash'],
+                current.get('transactions', []),
+                current['timestamp'],
+            )
+            if current.get('hash') != expected_hash:
                 return False
         
         return True
