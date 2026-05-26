@@ -13,9 +13,14 @@ import base64
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from datetime import timezone
-import time #ready to deploy
+import time
+import os
+import random
+import numpy as np
+import networkx as nx
 
 # Page configuration
 st.set_page_config(
@@ -24,8 +29,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-import os
 
 # API Configuration
 API_URL = os.getenv("API_URL", "http://localhost:8000")
@@ -224,8 +227,7 @@ if page == "🧭 Command Center":
         
     # Generate a live event if active
     if live_mode:
-        import random
-        import time
+        # Local imports consolidated globally
         # Create a mock transaction to send to the backend
         accounts = ["ACC" + str(random.randint(1000, 9999)), "mule_acc_001", "ACC" + str(random.randint(1000, 9999))]
         txn = {
@@ -809,12 +811,7 @@ elif page == "📊 Risk Analytics":
     st.markdown("Centralized SOC command console for real-time infrastructure and decision monitoring.")
     st.markdown("---")
     
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    import plotly.express as px
-    import pandas as pd
-    import numpy as np
-    import time
+    # Local imports consolidated globally
     
     # Check API Status
     try:
@@ -1028,6 +1025,10 @@ elif page == "📊 Risk Analytics":
                 st.info(f"✅ **Account {st.session_state.action_target} approved.**\n\nWhitelist updated and alert resolved in console.")
             # Clear after display or on next run
             st.session_state.action_taken = None
+
+    if is_live:
+        time.sleep(2)
+        st.rerun()
 
 # Page: Innovations
 elif page == "🧪 Innovation Lab":
@@ -1563,10 +1564,7 @@ elif page == "🕸️ Network Graph Explorer":
     st.markdown("Visualizing multi-hop money laundering patterns, star hubs, and mule accounts.")
     st.markdown("---")
     
-    import networkx as nx
-    import plotly.graph_objects as go
-    import random
-    import time
+    # Local imports consolidated globally
     
     # Initialize graph (same structure for consistency)
     G = nx.DiGraph()
@@ -1761,10 +1759,7 @@ elif page == "⌨️ Behavioral Biometrics":
     st.header("⌨️ Keystroke Dynamics & Biometric Analysis")
     st.markdown("Visualizing typing cadence anomalies to detect hesitation, duress, or bot-driven inputs.")
     
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    import random
-    import numpy as np
+    # Local imports consolidated globally
     
     # Session state for demo selection
     demo_type = st.radio("Select Session Profile", ["🟢 Normal User", "🔴 Under Duress (Hesitation Spikes)", "🤖 Automated Bot (Zero Variance)"], horizontal=True)
