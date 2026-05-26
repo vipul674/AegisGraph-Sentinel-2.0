@@ -89,6 +89,10 @@ class KeystrokeDynamicsAnalyzer:
         ]
         
         # Compute statistics
+        session_duration = keystroke_sequence.session_end - keystroke_sequence.session_start
+        if session_duration <= 0:
+            return self._empty_features()
+
         features = {
             # Hold time statistics (ms)
             'hold_time_mean': np.mean(hold_times) * 1000,
@@ -104,7 +108,7 @@ class KeystrokeDynamicsAnalyzer:
             
             # Typing speed
             'wpm': self._compute_wpm(keystroke_sequence),
-            'chars_per_second': len(events) / (keystroke_sequence.session_end - keystroke_sequence.session_start),
+            'chars_per_second': len(events) / session_duration,
             
             # Error metrics
             'error_rate': self._compute_error_rate(events),
@@ -116,7 +120,7 @@ class KeystrokeDynamicsAnalyzer:
             
             # Session metadata
             'total_events': len(events),
-            'session_duration': keystroke_sequence.session_end - keystroke_sequence.session_start,
+            'session_duration': session_duration,
         }
         
         return features
