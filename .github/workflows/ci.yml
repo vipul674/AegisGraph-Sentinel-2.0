@@ -29,4 +29,6 @@ jobs:
       - name: Run tests
         env:
           AEGIS_ENV: test
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
         run: python -m pytest tests/ --cov=src --cov-report=term-missing

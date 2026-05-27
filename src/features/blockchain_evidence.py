@@ -29,6 +29,8 @@ State of Maharashtra vs. Ramesh Kumar, 2026
 - Evidence ruled admissible → Conviction secured
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import time
