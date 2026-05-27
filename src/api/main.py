@@ -3,70 +3,86 @@ FastAPI Application for AegisGraph Sentinel 2.0
 
 Real-time fraud detection API service
 """
-from __future__ import annotations
-# Working on fraud detection API endpoints and streamlit integration
-# SECURITY NOTE:
-# We use pickle ONLY to load our own internally-generated synthetic graph
-# (data/synthetic/graph.gpickle). This file is created during data generation
-# and is treated as a trusted build artifact.
-# We will add SHA256 verification before loading to prevent tampering.
-import logging
-logger = logging.getLogger(__name__)
-import hashlib
-import hmac
-import os
-import asyncio
-from fastapi import FastAPI, HTTPException, Request, Header
-from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
-import asyncio
-import time
-from functools import partial
-from datetime import datetime, timezone
-from datetime import timezone
-from pathlib import Path
-from typing import Dict, List, Optional
-import uvicorn
-import random
-import json
-import networkx as nx
-import numpy as np
-from enum import Enum
+def _require_legal_export_authorization(authorization_token: str | None) -> None:
+    """Legacy wrapper: ensure a provided authorization token matches configured hash.
 
-from ..config import get_settings
-from ..config.validation import validate_environment
-from ..runtime import LifecycleManager, RuntimeState, honeypot_auto_release_loop
-from .schemas import (
-    TransactionCheckRequest,
-    TransactionCheckResponse,
-    BatchTransactionRequest,
-    BatchTransactionResponse,
-    HealthCheckResponse,
-    StatsResponse,
-    RiskBreakdown,
-    # Innovation schemas
-    VoiceAnalysisRequest,
-    VoiceAnalysisResponse,
-    AccountOpeningRequest,
-    AccountOpeningResponse,
-    HoneypotStatus,
-    HoneypotListResponse,
-    HoneypotStatsResponse,
-    BlockchainSealRequest,
-    BlockchainEvidenceResponse,
-    BlockchainVerificationResponse,
-    LegalExportRequest,
-    LegalExportResponse,
-    ExplainRequest,
-    OracleExplainRequest,
-    HoneypotDebugRequest,
-)
+    This function is kept for backward compatibility with callers that only
+    validate an Authorization-style token. Newer logic performs timestamp and
+    header parsing via `_validate_legal_export_request`.
+    """
+    expected_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
+    if not expected_hash:
+        raise HTTPException(
+            status_code=503,
+            detail="Legal export authorization is not configured",
+        )
 
+    if not authorization_token:
+        raise HTTPException(status_code=401, detail="Missing legal export authorization token")
+
+    provided_hash = hashlib.sha256(authorization_token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(provided_hash, expected_hash):
+        raise HTTPException(status_code=403, detail="Unauthorized legal export request")
+
+
+def _extract_legal_export_token(
+    authorization: str | None,
+    x_legal_export_token: str | None,
+) -> str | None:
+    if authorization:
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() == "bearer" and credentials.strip():
+            return credentials.strip()
+
+    if x_legal_export_token:
+        return x_legal_export_token.strip()
+
+    return None
+
+
+def _parse_request_timestamp(raw_timestamp: str | None) -> datetime | None:
+    if not raw_timestamp:
+        return None
+
+    candidate = raw_timestamp.strip()
+    try:
+        if candidate.isdigit() or (candidate.startswith("-") and candidate[1:].isdigit()):
+            return datetime.fromtimestamp(int(candidate), tz=timezone.utc)
+
+        parsed_timestamp = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+        return parsed_timestamp.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _validate_legal_export_request(
+    authorization: str | None,
+    x_legal_export_token: str | None,
+    x_request_timestamp: str | None,
+) -> None:
+    request_timestamp = _parse_request_timestamp(x_request_timestamp)
+    if request_timestamp is None:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    if abs((datetime.now(timezone.utc) - request_timestamp).total_seconds()) > 300:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    expected_token_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
+    if not expected_token_hash:
+        raise HTTPException(
+            status_code=503,
+            detail="Legal export authorization is not configured",
+        )
+
+    token = _extract_legal_export_token(authorization, x_legal_export_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized legal export request")
+
+    provided_token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(provided_token_hash, expected_token_hash):
+        raise HTTPException(status_code=403, detail="Unauthorized legal export request")
 from ..exceptions import register_exception_handlers, register_observability_middleware
 from ..observability import get_audit_logger, get_logger
 
@@ -119,17 +135,84 @@ def _require_honeypot_admin(x_honeypot_token: Optional[str]) -> None:
 
 
 def _require_legal_export_authorization(authorization_token: str | None) -> None:
+    """Legacy wrapper: ensure a provided authorization token matches configured hash.
+
+    This function is kept for backward compatibility with callers that only
+    validate an Authorization-style token. Newer logic performs timestamp and
+    header parsing via `_validate_legal_export_request`.
+    """
     expected_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
     if not expected_hash:
         raise HTTPException(
             status_code=503,
             detail="Legal export authorization is not configured",
         )
+
     if not authorization_token:
         raise HTTPException(status_code=401, detail="Missing legal export authorization token")
 
     provided_hash = hashlib.sha256(authorization_token.encode("utf-8")).hexdigest()
     if not hmac.compare_digest(provided_hash, expected_hash):
+        raise HTTPException(status_code=403, detail="Unauthorized legal export request")
+
+
+def _extract_legal_export_token(
+    authorization: str | None,
+    x_legal_export_token: str | None,
+) -> str | None:
+    if authorization:
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() == "bearer" and credentials.strip():
+            return credentials.strip()
+
+    if x_legal_export_token:
+        return x_legal_export_token.strip()
+
+    return None
+
+
+def _parse_request_timestamp(raw_timestamp: str | None) -> datetime | None:
+    if not raw_timestamp:
+        return None
+
+    candidate = raw_timestamp.strip()
+    try:
+        if candidate.isdigit() or (candidate.startswith("-") and candidate[1:].isdigit()):
+            return datetime.fromtimestamp(int(candidate), tz=timezone.utc)
+
+        parsed_timestamp = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+        return parsed_timestamp.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _validate_legal_export_request(
+    authorization: str | None,
+    x_legal_export_token: str | None,
+    x_request_timestamp: str | None,
+) -> None:
+    request_timestamp = _parse_request_timestamp(x_request_timestamp)
+    if request_timestamp is None:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    if abs((datetime.now(timezone.utc) - request_timestamp).total_seconds()) > 300:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    expected_token_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
+    if not expected_token_hash:
+        raise HTTPException(
+            status_code=503,
+            detail="Legal export authorization is not configured",
+        )
+
+    token = _extract_legal_export_token(authorization, x_legal_export_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized legal export request")
+
+    provided_token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(provided_token_hash, expected_token_hash):
         raise HTTPException(status_code=403, detail="Unauthorized legal export request")
 
 # Try to import model components, record availability but never disable completely
@@ -995,7 +1078,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Legal-Export-Token", "X-Request-Timestamp"],
     max_age=600,
 )
 
@@ -1888,7 +1971,14 @@ async def verify_evidence(evidence_id: str, block_number: int):
     summary="Export evidence for legal proceedings",
     description="Innovation 6: Generate court-admissible evidence package"
 )
-async def export_legal_evidence(request: LegalExportRequest):
+@limiter.limit("5/minute")
+async def export_legal_evidence(
+    request: Request,
+    export_request: LegalExportRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_legal_export_token: str | None = Header(default=None, alias="X-Legal-Export-Token"),
+    x_request_timestamp: str | None = Header(default=None, alias="X-Request-Timestamp"),
+):
     """
     Export blockchain evidence for legal proceedings
     
@@ -1899,25 +1989,28 @@ async def export_legal_evidence(request: LegalExportRequest):
         raise HTTPException(status_code=503, detail="Blockchain system not available")
     
     try:
-        _require_legal_export_authorization(request.authorization_token)
+        _validate_legal_export_request(
+            authorization=authorization,
+            x_legal_export_token=x_legal_export_token,
+            x_request_timestamp=x_request_timestamp,
+        )
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
             partial(
                 state.blockchain_manager.export_for_legal_proceedings,
-                evidence_id=request.evidence_id,
-                case_number=request.case_number,
-                requesting_authority=request.requesting_authority,
-                authorization_token=request.authorization_token,
+                evidence_id=export_request.evidence_id,
+                case_number=export_request.case_number,
+                requesting_authority=export_request.requesting_authority,
             ),
         )
         if 'error' in result:
             raise HTTPException(status_code=404, detail=result['error'])
         
         return LegalExportResponse(
-            evidence_id=request.evidence_id,
-            case_number=request.case_number,
+            evidence_id=export_request.evidence_id,
+            case_number=export_request.case_number,
             evidence_package=result['package'],
             chain_of_custody=result['chain_of_custody'],
             attestations=result['attestations'],
