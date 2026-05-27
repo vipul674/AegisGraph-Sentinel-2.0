@@ -915,16 +915,18 @@ elif page == "📊 Risk Analytics":
         # Calculate new risk score based on real-time alerts
         new_risk = np.random.normal(loc=30, scale=5.0)
         if 'realtime_alerts' in st.session_state and len(st.session_state.realtime_alerts) > 0:
-            latest_alert = st.session_state.realtime_alerts[0]
-            # Link to alert severity if fresh (within 3 seconds)
-            time_diff = (pd.Timestamp.now() - latest_alert['time']).total_seconds()
-            if time_diff < 3:
-                if latest_alert['severity'] == "Critical":
-                    new_risk = np.random.normal(loc=95, scale=2.0)
-                elif latest_alert['severity'] == "High":
-                    new_risk = np.random.normal(loc=82, scale=4.0)
-                elif latest_alert['severity'] == "Medium":
-                    new_risk = np.random.normal(loc=65, scale=6.0)
+            active_alerts_for_risk = [a for a in st.session_state.realtime_alerts if a.get('status', 'Active') != 'Resolved']
+            if active_alerts_for_risk:
+                latest_alert = active_alerts_for_risk[0]
+                # Link to alert severity if fresh (within 3 seconds)
+                time_diff = (pd.Timestamp.now() - latest_alert['time']).total_seconds()
+                if time_diff < 3:
+                    if latest_alert['severity'] == "Critical":
+                        new_risk = np.random.normal(loc=95, scale=2.0)
+                    elif latest_alert['severity'] == "High":
+                        new_risk = np.random.normal(loc=82, scale=4.0)
+                    elif latest_alert['severity'] == "Medium":
+                        new_risk = np.random.normal(loc=65, scale=6.0)
         new_risk = max(0, min(100, new_risk))
         
         st.session_state.risk_latency_history.append(new_latency)
@@ -1185,10 +1187,10 @@ elif page == "📊 Risk Analytics":
         # Initialize alerts
         if 'realtime_alerts' not in st.session_state:
             st.session_state.realtime_alerts = [
-                {"id": "AL-1001", "time": pd.Timestamp.now() - pd.Timedelta(seconds=45), "severity": "Critical", "title": "Mule Ring Topology Detected (Fan-out)", "category": "Graph"},
-                {"id": "AL-1002", "time": pd.Timestamp.now() - pd.Timedelta(seconds=120), "severity": "High", "title": "Velocity Spike on ACC00003254", "category": "Velocity"},
-                {"id": "AL-1003", "time": pd.Timestamp.now() - pd.Timedelta(minutes=5), "severity": "Medium", "title": "Hesitation Cadence Anomaly", "category": "Biometric"},
-                {"id": "AL-1004", "time": pd.Timestamp.now() - pd.Timedelta(minutes=15), "severity": "Low", "title": "Unusual Device Fingerprint", "category": "Device"}
+                {"id": "AL-1001", "time": pd.Timestamp.now() - pd.Timedelta(seconds=45), "severity": "Critical", "title": "Mule Ring Topology Detected (Fan-out)", "category": "Graph", "status": "Active"},
+                {"id": "AL-1002", "time": pd.Timestamp.now() - pd.Timedelta(seconds=120), "severity": "High", "title": "Velocity Spike on ACC00003254", "category": "Velocity", "status": "Active"},
+                {"id": "AL-1003", "time": pd.Timestamp.now() - pd.Timedelta(minutes=5), "severity": "Medium", "title": "Hesitation Cadence Anomaly", "category": "Biometric", "status": "Active"},
+                {"id": "AL-1004", "time": pd.Timestamp.now() - pd.Timedelta(minutes=15), "severity": "Low", "title": "Unusual Device Fingerprint", "category": "Device", "status": "Active"}
             ]
             
         # Simulate incoming alerts if live
@@ -1210,7 +1212,8 @@ elif page == "📊 Risk Analytics":
                 "time": pd.Timestamp.now(),
                 "severity": sev,
                 "title": np.random.choice(titles[sev]),
-                "category": categories[sev]
+                "category": categories[sev],
+                "status": "Active"
             }
             # Prepend and keep max 50 alerts safely
             st.session_state.realtime_alerts = [new_alert] + st.session_state.realtime_alerts[:49]
@@ -1240,14 +1243,28 @@ elif page == "📊 Risk Analytics":
         else:
             for alert in filtered_alerts:
                 time_str = alert["time"].strftime("%H:%M:%S")
-                html = f"""
-                <div class="alert-card">
-                    <span class="alert-time">{time_str}</span>
-                    <span class="alert-title">[{alert['category']}] {alert['title']} <span style="color:#64748b; font-size:0.75rem; margin-left:8px;">#{alert['id']}</span></span>
-                    <span class="severity-badge severity-{alert['severity']}">{alert['severity']}</span>
-                </div>
-                """
-                st.markdown(html, unsafe_allow_html=True)
+                is_resolved = alert.get('status', 'Active') == 'Resolved'
+                opacity = "0.5" if is_resolved else "1.0"
+                status_badge = "Resolved" if is_resolved else alert['severity']
+                
+                alert_col, btn_col = st.columns([5, 1])
+                with alert_col:
+                    html = f"""
+                    <div class="alert-card" style="opacity: {opacity}; margin-bottom: 0;">
+                        <span class="alert-time">{time_str}</span>
+                        <span class="alert-title">[{alert['category']}] {alert['title']} <span style="color:#64748b; font-size:0.75rem; margin-left:8px;">#{alert['id']}</span></span>
+                        <span class="severity-badge severity-{alert['severity']}">{status_badge}</span>
+                    </div>
+                    """
+                    st.markdown(html, unsafe_allow_html=True)
+                with btn_col:
+                    if not is_resolved:
+                        if st.button("Resolve", key=f"resolve_{alert['id']}", use_container_width=True):
+                            alert['status'] = 'Resolved'
+                            st.rerun()
+                    else:
+                        st.button("Resolved", key=f"resolved_{alert['id']}", disabled=True, use_container_width=True)
+                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     if is_live:
