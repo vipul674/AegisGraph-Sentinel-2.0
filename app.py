@@ -77,6 +77,40 @@ def _schedule_live_refresh(interval_ms: int = 1500) -> None:
     if st_autorefresh is not None:
         st_autorefresh(interval=interval_ms, key="command_center_live_refresh")
 
+
+def _advance_timed_state(
+    state_key: str,
+    timestamp_key: str,
+    interval_seconds: float,
+    max_steps: int,
+    loop: bool = True,
+) -> bool:
+    """Advance a session-state animation step when enough time has elapsed."""
+    if max_steps <= 0:
+        return False
+
+    now = datetime.now(timezone.utc)
+    last_tick = st.session_state.get(timestamp_key)
+    if last_tick is None:
+        st.session_state[timestamp_key] = now
+        return False
+
+    elapsed = (now - last_tick).total_seconds()
+    if elapsed < interval_seconds:
+        return False
+
+    current_step = int(st.session_state.get(state_key, 0))
+    steps_to_advance = max(1, int(elapsed // interval_seconds))
+
+    if loop:
+        next_step = (current_step + steps_to_advance) % max_steps
+    else:
+        next_step = min(current_step + steps_to_advance, max_steps - 1)
+
+    st.session_state[state_key] = next_step
+    st.session_state[timestamp_key] = now
+    return next_step != current_step
+
 # Custom CSS
 st.markdown("""
     <style>
@@ -1437,19 +1471,53 @@ elif page == "📊 Risk Analytics":
             inv_id = st.session_state.investigate_alert_id
             target_alert = next((a for a in st.session_state.realtime_alerts if a['id'] == inv_id), None)
             if target_alert:
+                timeline_steps = [
+                    (target_alert['time'] - pd.Timedelta(minutes=45), "Initial Login (Normal IP)"),
+                    (target_alert['time'] - pd.Timedelta(minutes=10), "Security Settings Changed (2FA Disabled)"),
+                    (target_alert['time'] - pd.Timedelta(minutes=2), "Large Transfer Initiated"),
+                    (target_alert['time'], f"ALERT TRIGGERED: {target_alert['title']}"),
+                ]
+                if st.session_state.get('investigation_alert_id_active') != inv_id:
+                    st.session_state.investigation_alert_id_active = inv_id
+                    st.session_state.investigation_timeline_step = 0
+                    st.session_state.investigation_timeline_last_tick = datetime.now(timezone.utc)
+
+                _schedule_live_refresh(1000)
+                _advance_timed_state(
+                    'investigation_timeline_step',
+                    'investigation_timeline_last_tick',
+                    2.0,
+                    len(timeline_steps),
+                    loop=False,
+                )
+                current_step = int(st.session_state.get('investigation_timeline_step', 0))
+
                 st.info(f"🔎 **Active Investigation:** {target_alert['title']} (`{inv_id}`)")
+                st.progress((current_step + 1) / len(timeline_steps))
                 timeline_col1, timeline_col2 = st.columns([3, 1])
                 
                 with timeline_col1:
-                    t = target_alert['time']
-                    st.markdown(f"**{(t - pd.Timedelta(minutes=45)).strftime('%H:%M:%S')}** &nbsp; 🟢 Initial Login (Normal IP)")
-                    st.markdown(f"**{(t - pd.Timedelta(minutes=10)).strftime('%H:%M:%S')}** &nbsp; 🟡 Security Settings Changed (2FA Disabled)")
-                    st.markdown(f"**{(t - pd.Timedelta(minutes=2)).strftime('%H:%M:%S')}** &nbsp; 🔴 Large Transfer Initiated")
-                    st.markdown(f"**{t.strftime('%H:%M:%S')}** &nbsp; 🚨 **ALERT TRIGGERED:** {target_alert['title']}")
+                    for idx, (timestamp_value, label) in enumerate(timeline_steps):
+                        time_label = timestamp_value.strftime('%H:%M:%S')
+                        is_current = idx == current_step
+                        is_complete = idx < current_step
+
+                        if is_current:
+                            st.info(f"**{time_label}** &nbsp; ▶ {label}")
+                        elif is_complete:
+                            st.markdown(f"**{time_label}** &nbsp; ✅ {label}")
+                        else:
+                            st.markdown(
+                                f"<div style='opacity:0.4;'><strong>{time_label}</strong> &nbsp; {label}</div>",
+                                unsafe_allow_html=True,
+                            )
                 with timeline_col2:
                     st.markdown("<br><br>", unsafe_allow_html=True)
                     if st.button("Close Investigation", use_container_width=True, type="primary"):
                         st.session_state.investigate_alert_id = None
+                        st.session_state.pop('investigation_alert_id_active', None)
+                        st.session_state.pop('investigation_timeline_step', None)
+                        st.session_state.pop('investigation_timeline_last_tick', None)
                         st.rerun()
                 st.markdown("---")
 
@@ -1489,8 +1557,7 @@ elif page == "📊 Risk Analytics":
         st.markdown('</div>', unsafe_allow_html=True)
 
     if is_live:
-        time.sleep(2)
-        st.rerun()
+        _schedule_live_refresh(2000)
 
 # Page: Innovations
 elif page == "🧪 Innovation Lab":
@@ -2077,12 +2144,19 @@ elif page == "🕸️ Network Graph Explorer":
         st.session_state.prop_step = 0
         
     if animate_propagation:
-        # Auto advance
-        st.session_state.prop_step = (st.session_state.prop_step + 1) % 4
+        if st.session_state.get('prop_animate_enabled') != True:
+            st.session_state.prop_animate_enabled = True
+            st.session_state.prop_last_advance_at = datetime.now(timezone.utc)
+
+        _schedule_live_refresh(1000)
+        _advance_timed_state('prop_step', 'prop_last_advance_at', 2.0, 4, loop=True)
         # Sync selectbox
         step_names = list(step_indices.keys())
         selected_step_name = step_names[st.session_state.prop_step]
     else:
+        if st.session_state.get('prop_animate_enabled') != False:
+            st.session_state.prop_animate_enabled = False
+            st.session_state.prop_last_advance_at = datetime.now(timezone.utc)
         st.session_state.prop_step = step_indices[step_option]
         selected_step_name = step_option
 
@@ -2212,10 +2286,6 @@ elif page == "🕸️ Network Graph Explorer":
     *   **Target Intervention Point**: Freezing `ACC00001071` (Mule Hub) dismantles 100% of Layering and Withdrawal activities.
     """)
     
-    if animate_propagation:
-        time.sleep(2.0)
-        st.rerun()
-
 # Page: Behavioral Biometrics
 elif page == "⌨️ Behavioral Biometrics":
     st.header("⌨️ Keystroke Dynamics & Biometric Analysis")
