@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 import shutil
+from typing import Union
 
 
 class StorageBackend(ABC):
@@ -26,7 +27,7 @@ class StorageBackend(ABC):
 class LocalBackend(StorageBackend):
     """Local filesystem storage backend."""
 
-    def __init__(self, base_dir: str | Path):
+    def __init__(self, base_dir: Union[str, Path]):
         """Initialise the local storage root."""
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)

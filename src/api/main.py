@@ -3,72 +3,186 @@ FastAPI Application for AegisGraph Sentinel 2.0
 
 Real-time fraud detection API service
 """
+
 from __future__ import annotations
-# Working on fraud detection API endpoints and streamlit integration
-# SECURITY NOTE:
-# We use pickle ONLY to load our own internally-generated synthetic graph
-# (data/synthetic/graph.gpickle). This file is created during data generation
-# and is treated as a trusted build artifact.
-# We will add SHA256 verification before loading to prevent tampering.
-import logging
-logger = logging.getLogger(__name__)
+
+import asyncio
 import hashlib
 import hmac
-import os
-import asyncio
-from fastapi import Depends, FastAPI, HTTPException, Request, Header
-from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
-import asyncio
-import time
-from functools import partial
-from datetime import datetime, timezone
-from datetime import timezone
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-import uvicorn
-import random
 import json
+import os
+import time
+from importlib import import_module
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from enum import Enum
+from functools import partial
+from pathlib import Path
+from itertools import islice
+from typing import Any, Dict, List, Optional
+
 import networkx as nx
 import numpy as np
-from enum import Enum
-from itertools import islice
+import uvicorn
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 
-from ..config import get_settings
+try:
+    _slowapi = import_module("slowapi")
+    _slowapi_errors = import_module("slowapi.errors")
+    _slowapi_middleware = import_module("slowapi.middleware")
+    _slowapi_util = import_module("slowapi.util")
+
+    Limiter = _slowapi.Limiter
+    _rate_limit_exceeded_handler = _slowapi._rate_limit_exceeded_handler
+    RateLimitExceeded = _slowapi_errors.RateLimitExceeded
+    SlowAPIMiddleware = _slowapi_middleware.SlowAPIMiddleware
+    get_remote_address = _slowapi_util.get_remote_address
+    SLOWAPI_AVAILABLE = True
+except ImportError as e:
+    SLOWAPI_AVAILABLE = False
+
+    class RateLimitExceeded(Exception):
+        pass
+
+    class Limiter:
+        def __init__(self, *args, **kwargs):
+            self.key_func = kwargs.get("key_func")
+
+        def limit(self, *args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    class SlowAPIMiddleware:
+        def __init__(self, app, *args, **kwargs):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            await self.app(scope, receive, send)
+
+    def get_remote_address(request):
+        client = getattr(request, "client", None)
+        return getattr(client, "host", "unknown")
+
+    async def _rate_limit_exceeded_handler(request, exc):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    print(f"SlowAPI not available ({e}); rate limiting disabled")
+
+from ..config.settings import get_settings
 from ..config.validation import validate_environment
-from ..runtime import LifecycleManager, RuntimeState, honeypot_auto_release_loop
+from ..exceptions import register_exception_handlers, register_observability_middleware
+from ..observability import get_audit_logger, get_logger
+from ..runtime import LifecycleManager, RuntimeState
+from ..runtime.background_tasks import honeypot_auto_release_loop
 from .schemas import (
-    TransactionCheckRequest,
-    TransactionCheckResponse,
-    BatchTransactionRequest,
-    BatchTransactionResponse,
-    HealthCheckResponse,
-    StatsResponse,
-    RiskBreakdown,
-    # Innovation schemas
-    VoiceAnalysisRequest,
-    VoiceAnalysisResponse,
     AccountOpeningRequest,
     AccountOpeningResponse,
-    HoneypotStatus,
+    BatchTransactionRequest,
+    BatchTransactionResponse,
+    BlockchainEvidenceResponse,
+    BlockchainSealRequest,
+    BlockchainVerificationResponse,
+    ExplainRequest,
+    HealthCheckResponse,
+    HoneypotDebugRequest,
     HoneypotListResponse,
     HoneypotStatsResponse,
-    BlockchainSealRequest,
-    BlockchainEvidenceResponse,
-    BlockchainVerificationResponse,
     LegalExportRequest,
     LegalExportResponse,
-    ExplainRequest,
     OracleExplainRequest,
-    HoneypotDebugRequest,
+    RiskBreakdown,
+    StatsResponse,
+    TransactionCheckRequest,
+    TransactionCheckResponse,
+    VoiceAnalysisRequest,
+    VoiceAnalysisResponse,
+    HoneypotStatus,
 )
 from .security import require_api_key
 
+def _require_legal_export_authorization(authorization_token: Optional[str]) -> None:
+    """Legacy wrapper: ensure a provided authorization token matches configured hash.
+
+    This function is kept for backward compatibility with callers that only
+    validate an Authorization-style token. Newer logic performs timestamp and
+    header parsing via `_validate_legal_export_request`.
+    """
+    expected_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
+    if not expected_hash:
+        raise HTTPException(
+            status_code=503,
+            detail="Legal export authorization is not configured",
+        )
+
+    if not authorization_token:
+        raise HTTPException(status_code=401, detail="Missing legal export authorization token")
+
+    provided_hash = hashlib.sha256(authorization_token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(provided_hash, expected_hash):
+        raise HTTPException(status_code=403, detail="Unauthorized legal export request")
+
+
+def _extract_legal_export_token(
+    authorization: Optional[str],
+    x_legal_export_token: Optional[str],
+) -> Optional[str]:
+    if authorization:
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() == "bearer" and credentials.strip():
+            return credentials.strip()
+
+    if x_legal_export_token:
+        return x_legal_export_token.strip()
+
+    return None
+
+
+def _parse_request_timestamp(raw_timestamp: Optional[str]) -> Optional[datetime]:
+    if not raw_timestamp:
+        return None
+
+    candidate = raw_timestamp.strip()
+    try:
+        if candidate.isdigit() or (candidate.startswith("-") and candidate[1:].isdigit()):
+            return datetime.fromtimestamp(int(candidate), tz=timezone.utc)
+
+        parsed_timestamp = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+        return parsed_timestamp.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _validate_legal_export_request(
+    authorization: Optional[str],
+    x_legal_export_token: Optional[str],
+    x_request_timestamp: Optional[str],
+) -> None:
+    request_timestamp = _parse_request_timestamp(x_request_timestamp)
+    if request_timestamp is None:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    if abs((datetime.now(timezone.utc) - request_timestamp).total_seconds()) > 300:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    expected_token_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
+    if not expected_token_hash:
+        raise HTTPException(
+            status_code=503,
+            detail="Legal export authorization is not configured",
+        )
+
+    token = _extract_legal_export_token(authorization, x_legal_export_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized legal export request")
+
+    provided_token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(provided_token_hash, expected_token_hash):
+        raise HTTPException(status_code=403, detail="Unauthorized legal export request")
 from ..exceptions import register_exception_handlers, register_observability_middleware
 from ..observability import get_audit_logger, get_logger
 from ..core import register_core_services, register_graph_services, register_innovation_services
@@ -137,18 +251,85 @@ def _require_honeypot_admin(x_honeypot_token: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="Unauthorized honeypot request")
 
 
-def _require_legal_export_authorization(authorization_token: str | None) -> None:
+def _require_legal_export_authorization(authorization_token: Optional[str]) -> None:
+    """Legacy wrapper: ensure a provided authorization token matches configured hash.
+
+    This function is kept for backward compatibility with callers that only
+    validate an Authorization-style token. Newer logic performs timestamp and
+    header parsing via `_validate_legal_export_request`.
+    """
     expected_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
     if not expected_hash:
         raise HTTPException(
             status_code=503,
             detail="Legal export authorization is not configured",
         )
+
     if not authorization_token:
         raise HTTPException(status_code=401, detail="Missing legal export authorization token")
 
     provided_hash = hashlib.sha256(authorization_token.encode("utf-8")).hexdigest()
     if not hmac.compare_digest(provided_hash, expected_hash):
+        raise HTTPException(status_code=403, detail="Unauthorized legal export request")
+
+
+def _extract_legal_export_token(
+    authorization: Optional[str],
+    x_legal_export_token: Optional[str],
+) -> Optional[str]:
+    if authorization:
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() == "bearer" and credentials.strip():
+            return credentials.strip()
+
+    if x_legal_export_token:
+        return x_legal_export_token.strip()
+
+    return None
+
+
+def _parse_request_timestamp(raw_timestamp: Optional[str]) -> Optional[datetime]:
+    if not raw_timestamp:
+        return None
+
+    candidate = raw_timestamp.strip()
+    try:
+        if candidate.isdigit() or (candidate.startswith("-") and candidate[1:].isdigit()):
+            return datetime.fromtimestamp(int(candidate), tz=timezone.utc)
+
+        parsed_timestamp = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+        return parsed_timestamp.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _validate_legal_export_request(
+    authorization: Optional[str],
+    x_legal_export_token: Optional[str],
+    x_request_timestamp: Optional[str],
+) -> None:
+    request_timestamp = _parse_request_timestamp(x_request_timestamp)
+    if request_timestamp is None:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    if abs((datetime.now(timezone.utc) - request_timestamp).total_seconds()) > 300:
+        raise HTTPException(status_code=401, detail="Request timestamp is missing or stale")
+
+    expected_token_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
+    if not expected_token_hash:
+        raise HTTPException(
+            status_code=503,
+            detail="Legal export authorization is not configured",
+        )
+
+    token = _extract_legal_export_token(authorization, x_legal_export_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized legal export request")
+
+    provided_token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(provided_token_hash, expected_token_hash):
         raise HTTPException(status_code=403, detail="Unauthorized legal export request")
 
 # Try to import model components, record availability but never disable completely
@@ -357,7 +538,7 @@ except (ImportError, SyntaxError) as e:
                                 metadata={"pattern": "chain", "chain_length": chain_length},
                             )
                 except Exception as e:
-                    logger.error(f"Error in graph pattern analysis: {e}")
+                    _api_logger.error(f"Error in graph pattern analysis: {e}")
                     pass
                 except:
                     print(f"⚠️ Chain pattern: {source_account} is part of a {chain_length}-hop chain")
@@ -569,6 +750,18 @@ except (ImportError, SyntaxError) as e:
             'explanation': explanation,
             'recommended_action': action
         }
+
+
+try:
+    from ..features.lateral_movement import LateralMovementDetector
+    LATERAL_MOVEMENT_AVAILABLE = True
+except (ImportError, SyntaxError) as e:
+    _api_logger.warning(
+        f"Lateral movement module not available ({e})",
+        event_type="lateral_movement_import_fallback",
+    )
+    LATERAL_MOVEMENT_AVAILABLE = False
+    LateralMovementDetector = None
 
 
 # Global state
@@ -874,7 +1067,9 @@ def _initialize_innovation_runtime(startup_logger):
 
     if LATERAL_MOVEMENT_AVAILABLE:
         try:
-            lateral_movement_detector = LateralMovementDetector()
+            state.lateral_movement_detector = LateralMovementDetector()
+            state.services.register_service("lateral_movement_detector", state.lateral_movement_detector, replace=True)
+            lateral_movement_detector = state.lateral_movement_detector
             startup_logger.info("Lateral Movement Detector initialized", event_type="innovation_ready")
         except Exception as e:
             startup_logger.warning(
@@ -1096,7 +1291,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Legal-Export-Token", "X-Request-Timestamp"],
     max_age=600,
 )
 
@@ -1106,8 +1301,9 @@ limiter = Limiter(
     default_limits=["100/minute"],
 )
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+if SLOWAPI_AVAILABLE:
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
 register_exception_handlers(app)
 register_observability_middleware(app)
@@ -1268,7 +1464,7 @@ async def check_transaction(request: TransactionCheckRequest):
                 biometrics,
                 request.source_account,
                 request.target_account,
-                lateral_movement_detector,
+                state.lateral_movement_detector if LATERAL_MOVEMENT_AVAILABLE else None,
                 INNOVATIONS_AVAILABLE,
             ),
         )
@@ -2020,7 +2216,14 @@ async def verify_evidence(evidence_id: str, block_number: int):
     summary="Export evidence for legal proceedings",
     description="Innovation 6: Generate court-admissible evidence package"
 )
-async def export_legal_evidence(request: LegalExportRequest):
+@limiter.limit("5/minute")
+async def export_legal_evidence(
+    request: Request,
+    export_request: LegalExportRequest,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    x_legal_export_token: Optional[str] = Header(default=None, alias="X-Legal-Export-Token"),
+    x_request_timestamp: Optional[str] = Header(default=None, alias="X-Request-Timestamp"),
+):
     """
     Export blockchain evidence for legal proceedings
     
@@ -2032,25 +2235,28 @@ async def export_legal_evidence(request: LegalExportRequest):
         raise HTTPException(status_code=503, detail="Blockchain system not available")
     
     try:
-        _require_legal_export_authorization(request.authorization_token)
+        _validate_legal_export_request(
+            authorization=authorization,
+            x_legal_export_token=x_legal_export_token,
+            x_request_timestamp=x_request_timestamp,
+        )
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
             partial(
-                blockchain_manager.export_for_legal_proceedings,
-                evidence_id=request.evidence_id,
-                case_number=request.case_number,
-                requesting_authority=request.requesting_authority,
-                authorization_token=request.authorization_token,
+                state.blockchain_manager.export_for_legal_proceedings,
+                evidence_id=export_request.evidence_id,
+                case_number=export_request.case_number,
+                requesting_authority=export_request.requesting_authority,
             ),
         )
         if 'error' in result:
             raise HTTPException(status_code=404, detail=result['error'])
         
         return LegalExportResponse(
-            evidence_id=request.evidence_id,
-            case_number=request.case_number,
+            evidence_id=export_request.evidence_id,
+            case_number=export_request.case_number,
             evidence_package=result['package'],
             chain_of_custody=result['chain_of_custody'],
             attestations=result['attestations'],

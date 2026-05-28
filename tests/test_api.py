@@ -7,16 +7,58 @@ import pytest
 from fastapi.testclient import TestClient
 import sys
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+import hashlib
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.api import main as api_main
 from src.api.main import app, state
-from src.api.schemas import RiskBreakdown, TransactionCheckResponse
+from src.api.schemas import RiskBreakdown, TransactionCheckResponse, LegalExportRequest
 
 
 client = TestClient(app)
+
+
+def _clear_rate_limit_storage():
+    limiter = api_main.limiter
+    for storage_attr in ("storage", "_storage"):
+        storage = getattr(limiter, storage_attr, None)
+        if storage is None:
+            continue
+
+        reset = getattr(storage, "reset", None)
+        if callable(reset):
+            reset()
+            return
+
+        for candidate in (storage, getattr(storage, "storage", None)):
+            if candidate is None:
+                continue
+
+            clear = getattr(candidate, "clear", None)
+            if callable(clear):
+                try:
+                    clear()
+                except TypeError:
+                    continue
+                return
+
+
+class _FakeBlockchainManager:
+    def export_for_legal_proceedings(self, evidence_id, case_number, requesting_authority):
+        return {
+            "package": {
+                "evidence_id": evidence_id,
+                "case_number": case_number,
+                "requesting_authority": requesting_authority,
+            },
+            "chain_of_custody": [{"event": "legal_export_generated"}],
+            "attestations": [{"validator": "validator-1"}],
+            "export_timestamp": "2026-05-27T00:00:00Z",
+            "authorized_by": requesting_authority,
+        }
 
 
 class TestHealthEndpoint:
@@ -47,6 +89,119 @@ class TestStatsEndpoint:
         assert "flagged_transactions" in data
         assert "average_response_time" in data
         assert "uptime_seconds" in data
+
+
+class TestLegalExportSecurity:
+    """Test legal evidence export hardening."""
+
+    def _enable_legal_export(self, monkeypatch):
+        monkeypatch.setattr(api_main, "INNOVATIONS_AVAILABLE", True)
+        monkeypatch.setattr(api_main.state, "blockchain_manager", _FakeBlockchainManager())
+        monkeypatch.setenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH", hashlib.sha256(b"legal-token").hexdigest())
+        _clear_rate_limit_storage()
+
+    def _headers(self, token="legal-token", timestamp=None, use_fallback=False):
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc)
+        timestamp_header = timestamp.isoformat().replace("+00:00", "Z")
+        headers = {"X-Request-Timestamp": timestamp_header}
+        if use_fallback:
+            headers["X-Legal-Export-Token"] = token
+        else:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    def test_legal_export_request_schema_has_no_token(self):
+        assert "authorization_token" not in LegalExportRequest.model_fields
+
+    def test_legal_export_requires_auth_header(self, monkeypatch):
+        self._enable_legal_export(monkeypatch)
+
+        response = client.post(
+            "/api/v1/blockchain/export",
+            json={
+                "evidence_id": "EVID-001",
+                "case_number": "CASE-001",
+                "requesting_authority": "Police Dept",
+            },
+            headers={"X-Request-Timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")},
+        )
+
+        assert response.status_code == 401
+
+    def test_legal_export_rejects_invalid_token(self, monkeypatch):
+        self._enable_legal_export(monkeypatch)
+
+        response = client.post(
+            "/api/v1/blockchain/export",
+            json={
+                "evidence_id": "EVID-001",
+                "case_number": "CASE-001",
+                "requesting_authority": "Police Dept",
+            },
+            headers=self._headers(token="wrong-token"),
+        )
+
+        assert response.status_code == 403
+
+    def test_legal_export_accepts_valid_token(self, monkeypatch):
+        self._enable_legal_export(monkeypatch)
+
+        response = client.post(
+            "/api/v1/blockchain/export",
+            json={
+                "evidence_id": "EVID-001",
+                "case_number": "CASE-001",
+                "requesting_authority": "Police Dept",
+            },
+            headers=self._headers(),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["evidence_id"] == "EVID-001"
+        assert data["case_number"] == "CASE-001"
+
+    def test_legal_export_rejects_expired_timestamp(self, monkeypatch):
+        self._enable_legal_export(monkeypatch)
+
+        expired_timestamp = datetime.now(timezone.utc) - timedelta(minutes=6)
+        response = client.post(
+            "/api/v1/blockchain/export",
+            json={
+                "evidence_id": "EVID-001",
+                "case_number": "CASE-001",
+                "requesting_authority": "Police Dept",
+            },
+            headers=self._headers(timestamp=expired_timestamp),
+        )
+
+        assert response.status_code == 401
+
+    def test_legal_export_is_rate_limited(self, monkeypatch):
+        self._enable_legal_export(monkeypatch)
+
+        payload = {
+            "evidence_id": "EVID-001",
+            "case_number": "CASE-001",
+            "requesting_authority": "Police Dept",
+        }
+
+        for _ in range(5):
+            response = client.post(
+                "/api/v1/blockchain/export",
+                json=payload,
+                headers=self._headers(),
+            )
+            assert response.status_code == 200
+
+        limited_response = client.post(
+            "/api/v1/blockchain/export",
+            json=payload,
+            headers=self._headers(),
+        )
+
+        assert limited_response.status_code == 429
 
 
 class TestFraudCheckEndpoint:

@@ -9,7 +9,7 @@ must not mutate the input.
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 import torch
 
 
@@ -36,7 +36,7 @@ class BaseAttack(ABC):
     """
     name: str = "base"
 
-    def __init__(self, config: AttackConfig | None = None):
+    def __init__(self, config: Optional[AttackConfig] = None):
         self.config = config or AttackConfig()
 
     @abstractmethod

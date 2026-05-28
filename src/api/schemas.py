@@ -466,7 +466,6 @@ class LegalExportRequest(BaseModel):
     evidence_id: str
     case_number: str = Field(description="Legal case number")
     requesting_authority: str = Field(description="Law enforcement agency")
-    authorization_token: str = Field(description="Authorization token for access")
 
 
 class LegalExportResponse(BaseModel):

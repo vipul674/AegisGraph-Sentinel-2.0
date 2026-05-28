@@ -400,7 +400,7 @@ class EvidenceJournal:
         with self._lock:
             return self._record_count
 
-    def load_evidence(self, evidence_id: str) -> dict | None:
+    def load_evidence(self, evidence_id: str) -> Optional[dict]:
         """Load one evidence record from the journal by ID."""
         self._ensure_index_loaded()
         with self._lock:
@@ -465,7 +465,7 @@ class RedisLedger:
         except Exception:
             self._mark_unavailable()
 
-    def load_evidence(self, evidence_id: str) -> dict | None:
+    def load_evidence(self, evidence_id: str) -> Optional[dict]:
         """Load one evidence record by ID."""
         if not self.available:
             return None
@@ -505,7 +505,7 @@ class RedisLedger:
         except Exception:
             self._mark_unavailable()
 
-    def load_block_metadata(self, block_number: Optional[int] = None) -> dict | None:
+    def load_block_metadata(self, block_number: Optional[int] = None) -> Optional[dict]:
         """Load latest block metadata."""
         if not self.available:
             return None
@@ -615,7 +615,7 @@ class BlockchainEvidenceManager:
             fraud_patterns.append('entropy_spike')
         return fraud_patterns
 
-    def _block_metadata_from_evidence(self, evidence: dict | None) -> dict | None:
+    def _block_metadata_from_evidence(self, evidence: Optional[dict]) -> Optional[dict]:
         """Build minimal block metadata from a stored evidence record."""
         if not evidence or int(evidence.get('block_number', 0)) <= 0:
             return None
@@ -632,7 +632,7 @@ class BlockchainEvidenceManager:
             'validator': validator,
         }
 
-    def _load_evidence_record(self, evidence_id: str) -> dict | None:
+    def _load_evidence_record(self, evidence_id: str) -> Optional[dict]:
         """Load evidence from Redis first, then the append-only journal."""
         record = self._redis.load_evidence(evidence_id)
         if record:
@@ -661,7 +661,7 @@ class BlockchainEvidenceManager:
 
         return None
 
-    def _load_block_metadata(self, block_number: int, evidence: dict | None = None) -> dict | None:
+    def _load_block_metadata(self, block_number: int, evidence: Optional[dict] = None) -> Optional[dict]:
         """Load block metadata from Redis, in-memory chain, or evidence fallback."""
         block = self._redis.load_block_metadata(block_number)
         if block:

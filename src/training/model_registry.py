@@ -9,7 +9,7 @@ import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Union
 
 import torch
 
@@ -23,8 +23,8 @@ class ModelRegistry:
 
     def __init__(
         self,
-        registry_dir: str | Path,
-        backend: StorageBackend | None = None,
+        registry_dir: Union[str, Path],
+        backend: Optional[StorageBackend] = None,
     ):
         """Initialise the registry directory and load its manifest."""
         self.registry_dir = Path(registry_dir)
@@ -175,7 +175,7 @@ class ModelRegistry:
             os.fsync(handle.fileno())
         os.replace(tmp_path, self.manifest_path)
 
-    def _find_version_entry(self, version_id: str) -> dict[str, Any] | None:
+    def _find_version_entry(self, version_id: str) -> Optional[dict[str, Any]]:
         """Return the manifest entry for a version id if it exists."""
         for entry in self._manifest.get("versions", []):
             if isinstance(entry, dict) and entry.get("version_id") == version_id:

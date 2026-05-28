@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Union
 
 from .evaluator import EvaluationResult
 
@@ -20,7 +20,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def write_json_report(results: Iterable[EvaluationResult], path: Path | str) -> Path:
+def write_json_report(results: Iterable[EvaluationResult], path: Union[Path, str]) -> Path:
     """Write all results to a JSON file. Returns the path written to."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -33,7 +33,7 @@ def write_json_report(results: Iterable[EvaluationResult], path: Path | str) -> 
     return path
 
 
-def write_markdown_report(results: Iterable[EvaluationResult], path: Path | str) -> Path:
+def write_markdown_report(results: Iterable[EvaluationResult], path: Union[Path, str]) -> Path:
     """Write a Markdown summary grouped by attack name. Returns the path."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
