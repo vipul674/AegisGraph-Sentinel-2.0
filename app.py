@@ -36,11 +36,40 @@ st.set_page_config(
 
 # API Configuration
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+MAX_BATCH_UPLOAD_BYTES = 5 * 1024 * 1024
+BATCH_PREVIEW_ROWS = 10
+BATCH_CHUNK_SIZE = 50
+BATCH_MAX_ROWS = 500
 
 
 def _accessible_status(emoji: str, label: str) -> str:
     """Return a visual status with an adjacent plain-text equivalent."""
     return f"{emoji} {label} ({label})"
+
+
+def _build_batch_transaction(row, index: int) -> dict:
+    """Normalize one CSV row into the fraud-check request payload."""
+    return {
+        "transaction_id": str(row.get("transaction_id", f"TXN_{index}")),
+        "source_account": str(row.get("source_account", "unknown")),
+        "target_account": str(row.get("target_account", "unknown")),
+        "amount": float(row.get("amount", 0)),
+        "currency": str(row.get("currency", "INR")),
+        "mode": str(row.get("mode", "UPI")),
+        "timestamp": str(row.get("timestamp", datetime.now(timezone.utc).isoformat() + "Z")),
+    }
+
+
+def _estimate_csv_rows(uploaded_file) -> int:
+    """Count CSV rows in bounded chunks without materializing the file."""
+    uploaded_file.seek(0)
+    total_rows = 0
+    for chunk in pd.read_csv(uploaded_file, chunksize=BATCH_CHUNK_SIZE):
+        total_rows += len(chunk)
+        if total_rows >= BATCH_MAX_ROWS:
+            break
+    uploaded_file.seek(0)
+    return total_rows
 
 
 def _schedule_live_refresh(interval_ms: int = 1500) -> None:
@@ -579,62 +608,94 @@ elif page == "📁 Batch Triage":
     
     if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded_file)
-            st.success(f"✅ Loaded {len(df)} transactions")
+            if getattr(uploaded_file, "size", 0) > MAX_BATCH_UPLOAD_BYTES:
+                st.error(
+                    f"File too large. Maximum allowed size is {MAX_BATCH_UPLOAD_BYTES // (1024 * 1024)} MB."
+                )
+                st.stop()
+
+            uploaded_file.seek(0)
+            preview_df = pd.read_csv(uploaded_file, nrows=BATCH_PREVIEW_ROWS)
+            uploaded_file.seek(0)
+            estimated_rows = _estimate_csv_rows(uploaded_file)
+            uploaded_file.seek(0)
+
+            st.success(
+                f"Loaded CSV preview. Estimated rows: "
+                f"{estimated_rows}{'+' if estimated_rows >= BATCH_MAX_ROWS else ''}"
+            )
             
             st.subheader("Preview")
-            st.dataframe(df.head(10), use_container_width=True)
+            st.dataframe(preview_df, use_container_width=True)
             
-            if st.button("🚀 Process All Transactions", use_container_width=True):
+            if estimated_rows >= BATCH_MAX_ROWS:
+                st.warning(
+                    f"Processing will stop after {BATCH_MAX_ROWS} rows to keep memory usage bounded."
+                )
+            
+            if st.button("Process All Transactions", use_container_width=True):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
                 results = []
+                processed_rows = 0
+                total_rows = max(min(estimated_rows, BATCH_MAX_ROWS), 1)
                 
-                for idx, row in df.iterrows():
-                    status_text.text(f"Processing {idx+1}/{len(df)}...")
-                    
-                    txn = {
-                        "transaction_id": str(row.get('transaction_id', f'TXN_{idx}')),
-                        "source_account": str(row.get('source_account', 'unknown')),
-                        "target_account": str(row.get('target_account', 'unknown')),
-                        "amount": float(row.get('amount', 0)),
-                        "currency": str(row.get('currency', 'INR')),
-                        "mode": str(row.get('mode', 'UPI')),
-                        "timestamp": str(row.get('timestamp', datetime.now(timezone.utc).isoformat() + "Z"))
-                    }
-                    
-                    # Add optional fields if present in CSV
-                    if 'ip_address' in row and pd.notna(row['ip_address']):
-                        txn['ip_address'] = str(row['ip_address'])
-                    if 'device_id' in row and pd.notna(row['device_id']):
-                        txn['device_id'] = str(row['device_id'])
-                    if 'location' in row and pd.notna(row['location']):
-                        txn['location'] = str(row['location'])
-                    
-                    try:
-                        response = requests.post(f"{API_URL}/api/v1/fraud/check", json=txn, timeout=30)
-                        if response.status_code == 200:
-                            result = response.json()
+                uploaded_file.seek(0)
+                for chunk in pd.read_csv(uploaded_file, chunksize=BATCH_CHUNK_SIZE):
+                    for _, row in chunk.iterrows():
+                        if processed_rows >= BATCH_MAX_ROWS:
+                            break
+                        
+                        status_text.text(f"Processing {processed_rows + 1}/{total_rows}...")
+                        
+                        txn = _build_batch_transaction(row, processed_rows)
+                        
+                        # Add optional fields if present in CSV
+                        if 'ip_address' in row and pd.notna(row['ip_address']):
+                            txn['ip_address'] = str(row['ip_address'])
+                        if 'device_id' in row and pd.notna(row['device_id']):
+                            txn['device_id'] = str(row['device_id'])
+                        if 'location' in row and pd.notna(row['location']):
+                            txn['location'] = str(row['location'])
+                        
+                        try:
+                            response = requests.post(f"{API_URL}/api/v1/fraud/check", json=txn, timeout=30)
+                            if response.status_code == 200:
+                                result = response.json()
+                                results.append({
+                                    'Transaction ID': txn['transaction_id'],
+                                    'Source': txn['source_account'],
+                                    'Target': txn['target_account'],
+                                    'Amount': f"Rs. {txn['amount']:,.0f}",
+                                    'Risk Score': f"{result['risk_score']:.2%}",
+                                    'risk_score_numeric': result['risk_score'],  # For charting
+                                    'Decision': result['decision'],
+                                    'Confidence': f"{result['confidence']:.0%}",
+                                    'Graph Risk': f"{result['breakdown']['graph']:.2%}",
+                                    'Velocity Risk': f"{result['breakdown']['velocity']:.2%}",
+                                })
+                            else:
+                                st.error(f"API Error for {txn['transaction_id']}: Status {response.status_code}")
+                                results.append({
+                                    'Transaction ID': txn['transaction_id'],
+                                    'Source': txn['source_account'],
+                                    'Target': txn['target_account'],
+                                    'Amount': f"Rs. {txn['amount']:,.0f}",
+                                    'Risk Score': 'ERROR',
+                                    'risk_score_numeric': 0,
+                                    'Decision': 'ERROR',
+                                    'Confidence': 'N/A',
+                                    'Graph Risk': 'N/A',
+                                    'Velocity Risk': 'N/A',
+                                })
+                        except Exception as e:
+                            st.error(f"Error processing {txn.get('transaction_id', 'unknown')}: {str(e)}")
                             results.append({
-                                'Transaction ID': txn['transaction_id'],
-                                'Source': txn['source_account'],
-                                'Target': txn['target_account'],
-                                'Amount': f"₹{txn['amount']:,.0f}",
-                                'Risk Score': f"{result['risk_score']:.2%}",
-                                'risk_score_numeric': result['risk_score'],  # For charting
-                                'Decision': result['decision'],
-                                'Confidence': f"{result['confidence']:.0%}",
-                                'Graph Risk': f"{result['breakdown']['graph']:.2%}",
-                                'Velocity Risk': f"{result['breakdown']['velocity']:.2%}",
-                            })
-                        else:
-                            st.error(f"API Error for {txn['transaction_id']}: Status {response.status_code}")
-                            results.append({
-                                'Transaction ID': txn['transaction_id'],
-                                'Source': txn['source_account'],
-                                'Target': txn['target_account'],
-                                'Amount': f"₹{txn['amount']:,.0f}",
+                                'Transaction ID': txn.get('transaction_id', 'unknown'),
+                                'Source': txn.get('source_account', 'unknown'),
+                                'Target': txn.get('target_account', 'unknown'),
+                                'Amount': f"Rs. {txn.get('amount', 0):,.0f}",
                                 'Risk Score': 'ERROR',
                                 'risk_score_numeric': 0,
                                 'Decision': 'ERROR',
@@ -642,24 +703,18 @@ elif page == "📁 Batch Triage":
                                 'Graph Risk': 'N/A',
                                 'Velocity Risk': 'N/A',
                             })
-                    except Exception as e:
-                        st.error(f"Error processing {txn.get('transaction_id', 'unknown')}: {str(e)}")
-                        results.append({
-                            'Transaction ID': txn.get('transaction_id', 'unknown'),
-                            'Source': txn.get('source_account', 'unknown'),
-                            'Target': txn.get('target_account', 'unknown'),
-                            'Amount': f"₹{txn.get('amount', 0):,.0f}",
-                            'Risk Score': 'ERROR',
-                            'risk_score_numeric': 0,
-                            'Decision': 'ERROR',
-                            'Confidence': 'N/A',
-                            'Graph Risk': 'N/A',
-                            'Velocity Risk': 'N/A',
-                        })
+                        
+                        processed_rows += 1
+                        progress_bar.progress(min(processed_rows / total_rows, 1.0))
                     
-                    progress_bar.progress((idx + 1) / len(df))
+                    if processed_rows >= BATCH_MAX_ROWS:
+                        break
                 
-                status_text.text("✅ Processing complete!")
+                status_text.text("Processing complete!")
+                
+                if not results:
+                    st.warning("No transactions were processed from the uploaded CSV.")
+                    st.stop()
                 
                 # Results
                 st.markdown("---")
