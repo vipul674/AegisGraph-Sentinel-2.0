@@ -1,0 +1,93 @@
+name: Universal Issue Report
+description: Open a bug report, feature request, task, or support ticket.
+title: "[ISSUE]: <Short Summary>"
+labels: ["triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🛠️ Welcome! 
+        Thank you for contributing to the project. Please fill out this form to help us understand and address your issue quickly.
+
+  - type: dropdown
+    id: issue-category
+    attributes:
+      label: 1. Issue Category
+      description: What type of issue are you raising?
+      options:
+        - 🐛 Bug Report (Something is broken or crashing)
+        - ✨ Feature Request / Enhancement (An idea for something new)
+        - 📋 Task / Chore (Refactoring, updating dependencies, CI/CD work)
+        - 📚 Documentation (Fixing typos, adding README info or docs)
+        - ❓ Question / Support (Need help using the software)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity-priority
+    attributes:
+      label: 2. Estimated Priority / Severity
+      description: How critical is this issue to the codebase?
+      options:
+        - 🔴 High (Blocker: Application crashes, critical security flaw)
+        - 🟡 Medium (Major: Core feature broken, but workaround exists)
+        - 🔵 Low (Minor: Cosmetic bug, optimization, typo, nice-to-have)
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 3. Summary & Context
+      description: Provide a clear and concise overview of what needs to be addressed.
+      placeholder: |
+        - What is the current situation?
+        - What is the goal of this issue?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-or-spec
+    attributes:
+      label: 4. Technical Details / Steps to Reproduce
+      description: |
+        - If a bug: Provide clear steps to reproduce it.
+        - If a feature/task: Provide the technical specifications or requirements.
+      placeholder: |
+        For Bugs:
+        1. Run `python main.py`
+        2. Click 'Submit' with empty inputs
+        3. See crash log...
+
+        For Tasks/Features:
+        - Upgrade `pydantic` to v2
+        - Update the corresponding environment variables
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcomes
+    attributes:
+      label: 5. Expected vs. Actual Behavior
+      description: What should happen, and what is happening instead? (Type N/A if this is a general task).
+      placeholder: |
+        Expected: The script handles empty inputs gracefully.
+        Actual: Throws an unhandled ValueValueError.
+    validations:
+      required: true
+
+  - type: image
+    id: visuals
+    attributes:
+      label: 6. Screenshots, Logs, or Error Tracebacks (Optional)
+      description: Drag and drop screenshots, screen recordings, or paste terminal errors here.
+
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Final Review
+      options:
+        - label: I have verified that this issue does not duplicate an existing open issue.
+          required: true
+        - label: I promise to follow up if maintainers ask clarifying questions.
+          required: false
