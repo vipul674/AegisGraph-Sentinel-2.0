@@ -5,6 +5,10 @@ from .lifecycle_manager import LifecycleManager
 from .runtime_state import RuntimeState
 from .service_container import ServiceContainer
 from .task_registry import TaskInfo, TaskRegistry
+from .service_health import ServiceHealth
+from .health_monitor import RuntimeHealthMonitor
+from .recovery_manager import RecoveryManager
+from .watchdog import RuntimeWatchdog
 
 __all__ = [
     "LifecycleManager",
@@ -13,4 +17,9 @@ __all__ = [
     "TaskInfo",
     "TaskRegistry",
     "honeypot_auto_release_loop",
+    "ServiceHealth",
+    "RuntimeHealthMonitor",
+    "RecoveryManager",
+    "RuntimeWatchdog",
 ]
+

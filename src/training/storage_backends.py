@@ -33,11 +33,15 @@ class LocalBackend(StorageBackend):
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, local_path: Path, artifact_key: str) -> str:
-        """Copy a local artifact into the backend."""
+        """Copy a local artifact into the backend, protecting against path traversal."""
         source = Path(local_path)
-        destination = self.base_dir / artifact_key
+        # Resolve destination and ensure it is within base_dir
+        destination = (self.base_dir / artifact_key).resolve()
+        self.base_dir.resolve()
+        if not destination.is_relative_to(self.base_dir.resolve()):
+            raise ValueError(f"Invalid artifact_key leads outside storage base directory: {artifact_key}")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if source.resolve() != destination.resolve():
+        if source.resolve() != destination:
             shutil.copy2(source, destination)
         return str(destination)
 

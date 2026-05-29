@@ -4,7 +4,7 @@ Pydantic schemas for API request/response validation
 # Schema validation for all fraud detection endpoints
 
 from pydantic import BaseModel, Field, field_validator, model_validator, AliasChoices, ConfigDict
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict, Union, Any
 from src.api.validators import (
     TransactionValidator,
     ValidationError,
@@ -238,6 +238,7 @@ class HealthCheckResponse(BaseModel):
     uptime_seconds: Optional[float] = Field(default=None, description="Service uptime in seconds")
     requests_processed: Optional[int] = Field(default=None, description="Total requests processed")
     timestamp: Optional[str] = Field(default=None, description="Response timestamp")
+    services_health: Optional[Dict[str, Dict[str, Any]]] = Field(default=None, description="Detailed health stats for registered services")
 
 
 class ModelInfo(BaseModel):

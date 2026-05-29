@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from .service_container import ServiceContainer
 from .task_registry import TaskRegistry
+from .health_monitor import RuntimeHealthMonitor
 
 
 @dataclass
@@ -16,6 +17,9 @@ class RuntimeState:
 
     services: ServiceContainer = field(default_factory=ServiceContainer)
     tasks: TaskRegistry = field(default_factory=TaskRegistry)
+    health_monitor: RuntimeHealthMonitor = field(default_factory=RuntimeHealthMonitor)
+    recovery_manager: Optional[Any] = None
+    watchdog: Optional[Any] = None
     legacy_state: Optional[Any] = None
     started: bool = False
     shutting_down: bool = False
@@ -47,4 +51,6 @@ class RuntimeState:
             "started": self.started,
             "shutting_down": self.shutting_down,
             "lifecycle_events": len(self.lifecycle_events),
+            "health_status": self.health_monitor.get_overall_status(),
         }
+
