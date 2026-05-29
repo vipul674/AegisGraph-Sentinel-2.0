@@ -53,6 +53,17 @@ def test_runtime_state_isolation_and_metrics():
     assert metrics["lifecycle_events"] == 1
 
 
+def test_runtime_state_lifecycle_events_are_bounded(monkeypatch):
+    monkeypatch.setattr(RuntimeState, "_max_lifecycle_events", 3)
+
+    runtime_state = RuntimeState()
+    for index in range(5):
+        runtime_state.record_lifecycle_event("unit_test", index=index)
+
+    assert len(runtime_state.lifecycle_events) == 3
+    assert [event["metadata"]["index"] for event in runtime_state.lifecycle_events] == [2, 3, 4]
+
+
 def test_task_registry_registers_and_cleans_completed_tasks():
     async def _run():
         registry = TaskRegistry()
