@@ -1,5 +1,5 @@
 import threading
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from typing import Any, Optional
 
 import networkx as nx
@@ -51,7 +51,9 @@ class LateralMovementDetector:
         elif self.use_redis:
             print("LateralMovementDetector: Connected to Redis Backend for multi-worker scaling.")
             self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
-            self._graph_cache = {}
+            self._graph_cache = OrderedDict()
+            self._graph_cache_version = None
+            self._graph_cache_max_size = 1024
             self.redis_client.setnx("aegis:graph:version", 0)
         else:
             print("LateralMovementDetector: Using Thread-Safe In-Memory Backend (Single Worker).")
@@ -99,8 +101,13 @@ class LateralMovementDetector:
             return self.active_graph
 
         current_version = int(self.redis_client.get("aegis:graph:version") or 0)
+        if self._graph_cache_version != current_version:
+            self._graph_cache.clear()
+            self._graph_cache_version = current_version
+
         cached = self._graph_cache.get(account_id)
         if cached and cached[0] == current_version:
+            self._graph_cache.move_to_end(account_id)
             return cached[1]
 
         G = nx.DiGraph()
@@ -131,6 +138,9 @@ class LateralMovementDetector:
             G.add_node(account_id)
 
         self._graph_cache[account_id] = (current_version, G)
+        self._graph_cache.move_to_end(account_id)
+        while len(self._graph_cache) > self._graph_cache_max_size:
+            self._graph_cache.popitem(last=False)
         return G
 
     def _calculate_approx_centrality(self, account_id):
