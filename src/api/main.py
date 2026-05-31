@@ -4,7 +4,6 @@ FastAPI Application for AegisGraph Sentinel 2.0
 Real-time fraud detection API service
 """
 
-from __future__ import annotations
 
 import asyncio
 import binascii
