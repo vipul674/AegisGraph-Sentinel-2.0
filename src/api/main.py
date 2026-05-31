@@ -961,7 +961,7 @@ class AppState:
         self.decisions = {decision.value: 0 for decision in FraudDecision}
         self.total_risk_score = 0.0
         self.total_processing_time = 0.0
-        self.metrics_lock = None
+        self._metrics_lock = None
         self.model_loaded = False
         self.config = {}
         # Graph-based fraud detection
@@ -980,6 +980,12 @@ class AppState:
         self.blockchain_manager = None
         self.aegis_oracle = None  # Explainability engine
         self.lateral_movement_detector = None
+
+    @property
+    def metrics_lock(self):
+        if self._metrics_lock is None:
+            self._metrics_lock = asyncio.Lock()
+        return self._metrics_lock
 
     @property
     def voice_analyzer(self) -> Any:
