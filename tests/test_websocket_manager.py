@@ -1,26 +1,7 @@
 import pytest
-import asyncio
 import time
-from src.api.websocket_manager import WebSocketManager
 
-class MockWebSocket:
-    def __init__(self):
-        self.accepted = False
-        self.closed = False
-        self.close_code = None
-        self.messages = []
-        
-    async def accept(self):
-        self.accepted = True
-        
-    async def close(self, code=1000, reason=""):
-        self.closed = True
-        self.close_code = code
-        
-    async def send_json(self, data):
-        if self.closed:
-            raise Exception("Cannot send on closed connection")
-        self.messages.append(data)
+from src.api.websocket_manager import WebSocketManager
 
 
 @pytest.mark.anyio
@@ -85,3 +66,32 @@ async def test_broadcast():
     assert ws1.messages[0] == {"fraud_alert": "high"}
     assert len(ws2.messages) == 1
     assert ws2.messages[0] == {"fraud_alert": "high"}
+@pytest.mark.asyncio
+async def test_disconnect_history_eviction_drops_stale_clients():
+    manager = WebSocketManager(disconnect_history_ttl=1.0, max_disconnect_history_entries=10)
+    now = time.time()
+    manager.disconnect_history = {
+        "stale-client": [now - 10.0, now - 9.0],
+        "fresh-client": [now - 0.2],
+    }
+
+    await manager.evict_stale_disconnect_history()
+
+    assert "stale-client" not in manager.disconnect_history
+    assert "fresh-client" in manager.disconnect_history
+
+
+@pytest.mark.asyncio
+async def test_disconnect_history_eviction_caps_total_clients():
+    manager = WebSocketManager(disconnect_history_ttl=60.0, max_disconnect_history_entries=2)
+    now = time.time()
+    manager.disconnect_history = {
+        "client-a": [now - 30.0],
+        "client-b": [now - 20.0],
+        "client-c": [now - 10.0],
+    }
+
+    await manager.evict_stale_disconnect_history()
+
+    assert len(manager.disconnect_history) == 2
+    assert "client-a" not in manager.disconnect_history

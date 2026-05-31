@@ -63,6 +63,35 @@ class TestKeystrokeDynamics:
         # Stressed typing should have higher stress score
         assert features['stress_score'] > 0.3
 
+    def test_analyze_does_not_reiterate_raw_events(self):
+        """Test analyze() reuses extracted interval metrics instead of rescanning input."""
+        analyzer = KeystrokeDynamicsAnalyzer()
+
+        class OneShotEvents:
+            def __init__(self, payload):
+                self._payload = payload
+                self._consumed = False
+
+            def __iter__(self):
+                if self._consumed:
+                    raise AssertionError("analyze() should not iterate raw events twice")
+                self._consumed = True
+                return iter(self._payload)
+
+        events = OneShotEvents([
+            {'key': 'a', 'timestamp': 0.0, 'event_type': 'keydown'},
+            {'key': 'a', 'timestamp': 0.1, 'event_type': 'keyup'},
+            {'key': 'b', 'timestamp': 0.15, 'event_type': 'keydown'},
+            {'key': 'b', 'timestamp': 0.25, 'event_type': 'keyup'},
+            {'key': 'c', 'timestamp': 0.3, 'event_type': 'keydown'},
+            {'key': 'c', 'timestamp': 0.4, 'event_type': 'keyup'},
+        ])
+
+        features = analyzer.analyze(events)
+
+        assert 'timestamp_interval_cv' in features
+        assert features['stress_score'] >= 0
+
 
 class TestVelocityCalculator:
     """Test transaction velocity calculator"""
