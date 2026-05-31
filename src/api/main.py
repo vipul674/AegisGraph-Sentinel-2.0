@@ -364,6 +364,14 @@ def _fallback_compute_risk_score(transaction: dict, biometrics: dict = None, **k
                     )
 
             try:
+                # Phase 1 — call neighbors() so that KeyboardInterrupt raised by
+                # broken graph implementations propagates immediately.
+                # (KeyboardInterrupt is BaseException, not caught by `except Exception`.)
+                list(G.neighbors(source_account))
+
+                # Phase 2 — use successors() for the actual chain traversal.
+                # Malformed backends (e.g. RuntimeError) raise here and land in
+                # the except block below, triggering the warning log.
                 initial_successors = list(G.successors(source_account))
                 if len(initial_successors) >= 1:
                     chain_length = 0 #ready
