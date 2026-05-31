@@ -72,6 +72,7 @@ class GraphEntropyCalculator:
         graph: nx.Graph,
         node_attributes: Dict[str, Dict],
         attribute_key: str = 'type',
+        neighborhood_profile: Optional[Dict[str, object]] = None,
     ) -> float:
         """
         Compute entropy based on diversity of neighbor attributes
@@ -91,8 +92,11 @@ class GraphEntropyCalculator:
             Entropy value
         """
         try:
-            # Get k-hop neighbors
-            neighbors = self._get_k_hop_neighbors(node, graph, self.neighborhood_size)
+            profile = neighborhood_profile or self._build_neighborhood_profile(
+                node,
+                graph,
+            )
+            neighbors = profile["k_hop_neighbors"]
             
             if len(neighbors) == 0:
                 return 0.0
@@ -124,6 +128,7 @@ class GraphEntropyCalculator:
         self,
         node: str,
         graph: nx.Graph,
+        neighborhood_profile: Optional[Dict[str, object]] = None,
     ) -> Dict[str, float]:
         """
         Compute entropy based on degree distribution of neighbors
@@ -136,7 +141,11 @@ class GraphEntropyCalculator:
             Dictionary with entropy metrics
         """
         try:
-            neighbors = list(graph.neighbors(node))
+            profile = neighborhood_profile or self._build_neighborhood_profile(
+                node,
+                graph,
+            )
+            neighbors = list(profile["direct_neighbors"])
             
             if len(neighbors) == 0:
                 return {
@@ -145,8 +154,8 @@ class GraphEntropyCalculator:
                     'degree_variance': 0.0,
                 }
             
-            # Get neighbor degrees
-            neighbor_degrees = [graph.degree(n) for n in neighbors]
+            # Reuse the cached local profile to avoid repeated degree scans.
+            neighbor_degrees = list(profile["neighbor_degrees"])
             
             # Binning degrees for entropy calculation
             bins = [0, 1, 5, 10, 50, 100, float('inf')]
@@ -222,6 +231,7 @@ class GraphEntropyCalculator:
         self,
         node: str,
         graph: nx.Graph,
+        neighborhood_profile: Optional[Dict[str, object]] = None,
     ) -> Dict[str, float]:
         """
         Compute structural entropy metrics
@@ -236,7 +246,11 @@ class GraphEntropyCalculator:
             Dictionary with structural entropy metrics
         """
         try:
-            neighbors = self._get_neighbors(graph, node)
+            profile = neighborhood_profile or self._build_neighborhood_profile(
+                node,
+                graph,
+            )
+            neighbors = profile["direct_neighbors"]
             
             if len(neighbors) < 2:
                 return {
@@ -253,7 +267,7 @@ class GraphEntropyCalculator:
                 clustering = self._estimate_clustering_from_edge_density(neighbors, graph)
 
             # Local efficiency
-            subgraph = graph.subgraph([node] + list(neighbors))
+            subgraph = profile["subgraph"]
             local_eff_fn = getattr(nx, "local_efficiency", None)
             if callable(local_eff_fn):
                 try:
@@ -265,7 +279,7 @@ class GraphEntropyCalculator:
                 local_eff = 0.0
 
             # Structural entropy based on edge distribution
-            edges_between_neighbors = self._count_edges_between_neighbors(graph, neighbors)
+            edges_between_neighbors = profile["edges_between_neighbors"]
             
             # Maximum possible edges
             max_edges = len(neighbors) * (len(neighbors) - 1) // 2
@@ -319,6 +333,25 @@ class GraphEntropyCalculator:
             return set(graph.successors(node))
         return set()
 
+    def _build_neighborhood_profile(
+        self,
+        node: str,
+        graph: nx.Graph,
+    ) -> Dict[str, object]:
+        """Materialize the local graph snapshot once for entropy feature reuse."""
+        direct_neighbors = self._get_neighbors(graph, node)
+        k_hop_neighbors = self._get_k_hop_neighbors(node, graph, self.neighborhood_size)
+        subgraph = graph.subgraph([node] + list(direct_neighbors))
+        neighbor_degrees = [self._get_node_degree(graph, neighbor) for neighbor in direct_neighbors]
+        edges_between_neighbors = self._count_edges_between_neighbors(graph, direct_neighbors)
+        return {
+            "direct_neighbors": direct_neighbors,
+            "k_hop_neighbors": k_hop_neighbors,
+            "subgraph": subgraph,
+            "neighbor_degrees": neighbor_degrees,
+            "edges_between_neighbors": edges_between_neighbors,
+        }
+
     def _estimate_clustering_from_edge_density(
         self,
         neighbors: Set[str],
@@ -329,6 +362,25 @@ class GraphEntropyCalculator:
         if max_edges <= 0:
             return 0.0
         return self._count_edges_between_neighbors(graph, neighbors) / max_edges
+
+    def _get_node_degree(self, graph: nx.Graph, node: str) -> int:
+        """Return a node degree across real NetworkX graphs and local test stubs."""
+        degree_attr = getattr(graph, "degree", None)
+        if callable(degree_attr):
+            try:
+                return int(degree_attr(node))
+            except Exception:
+                pass
+        if degree_attr is not None:
+            try:
+                return int(degree_attr[node])
+            except Exception:
+                pass
+        if hasattr(graph, "neighbors"):
+            return len(list(graph.neighbors(node)))
+        if hasattr(graph, "successors"):
+            return len(list(graph.successors(node)))
+        return 0
     
     def compute_transaction_amount_entropy(
         self,
@@ -393,20 +445,35 @@ class GraphEntropyCalculator:
             Dictionary with all entropy features
         """
         features = {}
+        neighborhood_profile = self._build_neighborhood_profile(node, graph)
         
         # Neighbor entropy
         if node_attributes is not None:
             for attr_key in ['type', 'category']:
                 if any(attr_key in attrs for attrs in node_attributes.values()):
-                    entropy = self.compute_neighbor_entropy(node, graph, node_attributes, attr_key)
+                    entropy = self.compute_neighbor_entropy(
+                        node,
+                        graph,
+                        node_attributes,
+                        attr_key,
+                        neighborhood_profile=neighborhood_profile,
+                    )
                     features[f'neighbor_entropy_{attr_key}'] = entropy
         
         # Degree entropy
-        degree_features = self.compute_degree_entropy(node, graph)
+        degree_features = self.compute_degree_entropy(
+            node,
+            graph,
+            neighborhood_profile=neighborhood_profile,
+        )
         features.update(degree_features)
         
         # Structural entropy
-        structural_features = self.compute_structural_entropy(node, graph)
+        structural_features = self.compute_structural_entropy(
+            node,
+            graph,
+            neighborhood_profile=neighborhood_profile,
+        )
         features.update(structural_features)
         
         # Temporal entropy
