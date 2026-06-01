@@ -40,12 +40,12 @@ st.set_page_config(
 
 # API Configuration
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
-MAX_BATCH_UPLOAD_BYTES = 5 * 1024 * 1024
-BATCH_PREVIEW_ROWS = 10
-BATCH_CHUNK_SIZE = 50
-BATCH_MAX_ROWS = 500
+MAX_BATCH_UPLOAD_BYTES = int(os.getenv("MAX_BATCH_UPLOAD_BYTES", 5 * 1024 * 1024))
+BATCH_PREVIEW_ROWS = int(os.getenv("BATCH_PREVIEW_ROWS", 10))
+BATCH_CHUNK_SIZE = int(os.getenv("BATCH_CHUNK_SIZE", 50))
+BATCH_MAX_ROWS = int(os.getenv("BATCH_MAX_ROWS", 500))
 COMMAND_CENTER_REFRESH_KEY = "command_center_live_refresh"
-COMMAND_CENTER_IO_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+COMMAND_CENTER_IO_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("COMMAND_CENTER_WORKERS", 2)))
 
 
 def _cache_data(ttl: int):
