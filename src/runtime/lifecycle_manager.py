@@ -78,7 +78,7 @@ class LifecycleManager:
             self._logger.info("Runtime startup complete", event_type="runtime_startup_complete")
 
             # Emit RuntimeStartedEvent after all steps succeed.
-            if dispatcher is not None:
+            if dispatcher is not None and dispatcher.started:
                 dispatcher.dispatch(
                     RuntimeStartedEvent(
                         source="lifecycle_manager",
