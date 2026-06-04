@@ -86,6 +86,7 @@ class LifecycleManager:
                     )
                 )
 
+
     async def shutdown(self) -> None:
         async with self._lock:
             if self._shutting_down:
@@ -111,6 +112,8 @@ class LifecycleManager:
             # Emit RuntimeShutdownEvent then stop the dispatcher so it
             # drains any remaining queued events before exiting.
             if dispatcher is not None:
+                if not dispatcher.started:
+                    await dispatcher.start()
                 dispatcher.dispatch(
                     RuntimeShutdownEvent(
                         source="lifecycle_manager",
@@ -118,6 +121,7 @@ class LifecycleManager:
                     )
                 )
                 await dispatcher.stop()
+
 
     async def _rollback_startup(self, completed_steps: List[str]) -> None:
         """Tear down steps that already ran after a startup failure."""

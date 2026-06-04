@@ -1041,31 +1041,14 @@ def _initialize_innovation_runtime(startup_logger):
         state.runtime.health_monitor.register_service("blockchain_manager")
         state.runtime.health_monitor.register_service("aegis_oracle")
 
-    # NOTE: LateralMovementDetector is intentionally kept on the
-    # eager startup path (unlike other innovation services which
-    # are lazy). It connects to Redis on init, and we want that
-    # connection failure surfaced at boot rather than silently
-    # degrading on the first fraud request. A follow-up PR can
-    # move this to the lazy provider pattern if full consistency
-    # is preferred.
+    # NOTE: LateralMovementDetector is intentionally deferred
+    # to first request via get_lateral_movement_detector() in
+    # src/api/dependencies/subsystems.py. Construction is
+    # guarded by an asyncio.Lock to prevent double-init.
     if LATERAL_MOVEMENT_AVAILABLE:
-        try:
-            detector_cls = LateralMovementDetector
-            if detector_cls is None:
-                from src.features.lateral_movement import LateralMovementDetector as detector_cls
-            _lmd = detector_cls()
-            state.services.register_service("lateral_movement_detector", _lmd, replace=True)
-            lateral_movement_detector = _lmd
-            state.runtime.health_monitor.register_service("lateral_movement_detector")
-            state.runtime.health_monitor.mark_healthy("lateral_movement_detector")
-            startup_logger.info("Lateral Movement Detector initialized", event_type="innovation_ready")
-        except Exception as e:
-            state.runtime.health_monitor.register_service("lateral_movement_detector")
-            state.runtime.health_monitor.mark_failed("lateral_movement_detector", error=str(e))
-            startup_logger.warning(
-                f"Lateral movement initialization failed: {e}",
-                event_type="innovation_init_failed",
-            )
+        state.runtime.health_monitor.register_service(
+            "lateral_movement_detector"
+        )
     else:
         startup_logger.warning("Innovation modules not available", event_type="innovations_unavailable")
 
@@ -1890,13 +1873,19 @@ if settings.runtime.debug:
         except Exception as e:
             _raise_internal_server_error("Debug honeypot activation", e)
 
-@app.websocket("/api/v1/fraud/stream/{client_id}", dependencies=[Depends(require_api_key)])
+@app.websocket("/api/v1/fraud/stream/{client_id}")
 async def fraud_stream_websocket(websocket: WebSocket, client_id: str):
     """
     Realtime fraud monitoring stream.
     Accepts WebSocket connections and streams fraud decisions.
     Requires periodic 'ping' messages as heartbeats.
     """
+    try:
+        require_api_key(websocket.headers.get("X-API-Key"))
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+
     accepted = await ws_manager.connect(websocket, client_id)
     if not accepted:
         return
