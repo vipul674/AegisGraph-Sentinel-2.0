@@ -58,13 +58,25 @@ def _deep_merge(base: MutableMapping[str, Any], override: Mapping[str, Any]) -> 
     return base
 
 
+def _substitute_env_vars(raw: str) -> str:
+    """Replace ${VAR_NAME} placeholders with os.environ values."""
+    import re as _re
+
+    def _replace(match: "_re.Match[str]") -> str:
+        return os.environ.get(match.group(1), "")
+
+    return _re.sub(r"\$\{([^}]+)\}", _replace, raw)
+
+
 def _load_yaml(path: Path, *, optional: bool = True) -> Dict[str, Any]:
     if not path.exists():
         if optional:
             return {}
         raise FileNotFoundError(f"Configuration file not found: {path}")
     with path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
+        raw = handle.read()
+    raw = _substitute_env_vars(raw)
+    data = yaml.safe_load(raw) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Configuration file must contain a mapping: {path}")
     return data
