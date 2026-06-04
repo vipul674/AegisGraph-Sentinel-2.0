@@ -13,7 +13,7 @@ class ConnectionState:
 
 class WebSocketManager:
     """Manages active WebSocket connections with bounded reconnect recovery and stale cleanup."""
-    
+
     def __init__(
         self,
         heartbeat_timeout: float = 60.0,
@@ -30,16 +30,30 @@ class WebSocketManager:
         self._lock = asyncio.Lock()
         self._eviction_task: asyncio.Task | None = None
         self._eviction_interval = max(5.0, disconnect_history_ttl / 2.0)
+        self._eviction_stop_event = asyncio.Event()
 
     async def start_eviction(self):
         """Start a background task that periodically evicts stale disconnect history."""
         if self._eviction_task is not None:
             return
 
+        # Reset stop flag for a new loop.
+        self._eviction_stop_event.clear()
+
         async def _evict_loop():
-            while True:
-                await asyncio.sleep(self._eviction_interval)
-                await self.evict_stale_disconnect_history()
+            try:
+                while not self._eviction_stop_event.is_set():
+                    # If there are no active connections, exit automatically.
+                    async with self._lock:
+                        has_active = bool(self.active_connections)
+                    if not has_active:
+                        return
+
+                    await asyncio.sleep(self._eviction_interval)
+                    await self.evict_stale_disconnect_history()
+            except asyncio.CancelledError:
+                # Expected during shutdown.
+                return
 
         self._eviction_task = asyncio.create_task(_evict_loop())
         self._eviction_task.set_name("ws-disconnect-eviction")
@@ -49,6 +63,7 @@ class WebSocketManager:
         if self._eviction_task is None:
             return
 
+        self._eviction_stop_event.set()
         self._eviction_task.cancel()
         try:
             await self._eviction_task
@@ -79,6 +94,10 @@ class WebSocketManager:
                     key=lambda client_id: self.disconnect_history[client_id][-1],
                 )
                 del self.disconnect_history[oldest_client_id]
+
+            # If there are no active connections, ensure the eviction loop exits.
+            if not self.active_connections:
+                self._eviction_stop_event.set()
         
     async def connect(self, websocket: WebSocket, client_id: str) -> bool:
         """
@@ -120,8 +139,17 @@ class WebSocketManager:
             if client_id in self.active_connections:
                 del self.active_connections[client_id]
                 self.disconnect_history.setdefault(client_id, []).append(time.time())
+
                 await self.evict_stale_disconnect_history()
                 logger.info(f"Client {client_id} disconnected")
+
+                # If nothing is connected, stop eviction so tests don't hang.
+                if not self.active_connections:
+                    self._eviction_stop_event.set()
+                    if self._eviction_task is not None:
+                        # Best-effort: cancel without awaiting inside the lock.
+                        self._eviction_task.cancel()
+        # If we set the stop flag, allow the task to exit on its next loop iteration.
 
     async def heartbeat(self, client_id: str):
         """Update the heartbeat timestamp for an active client."""
