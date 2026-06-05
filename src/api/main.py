@@ -90,7 +90,10 @@ except ImportError as e:
     async def _rate_limit_exceeded_handler(request, exc):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
-    print(f"SlowAPI not available ({e}); rate limiting disabled")
+    import logging as _stdlib_logging
+    _stdlib_logging.getLogger(__name__).warning(
+        "SlowAPI not available (%s); rate limiting disabled", e
+    )
 
 
 
@@ -837,10 +840,11 @@ async def _honeypot_auto_release_loop(interval_seconds: int = 60):
 
 
 
-def _startup_banner():
-    print("=" * 80)
-    print("AegisGraph Sentinel 2.0 - Starting up...")
-    print("=" * 80)
+def _startup_banner(startup_logger):
+    startup_logger.info(
+        "AegisGraph Sentinel 2.0 - Starting up...",
+        event_type="startup_banner",
+    )
 
 
 def _validate_runtime_environment(startup_logger):
@@ -927,7 +931,14 @@ async def _load_graph_runtime_data(startup_logger):
                     event_type="neo4j_initialized",
                     metadata={"uri": uri, "user": user},
                 )
-                print(f"✓ Initialized active Neo4j database integration: {provider.number_of_nodes} nodes, {provider.number_of_edges} edges")
+                startup_logger.info(
+                    "Neo4j database integration active",
+                    event_type="neo4j_active",
+                    metadata={
+                        "nodes": provider.number_of_nodes,
+                        "edges": provider.number_of_edges,
+                    },
+                )
             else:
                 startup_logger.warning(
                     "Neo4j enabled but connection failed. Falling back to static graph files.",
@@ -977,15 +988,25 @@ async def _load_graph_runtime_data(startup_logger):
                         "edges": state.transaction_graph.number_of_edges(),
                     },
                 )
-                print(f"✓ Loaded verified transaction graph: {state.transaction_graph.number_of_nodes()} nodes, "
-                      f"{state.transaction_graph.number_of_edges()} edges")
+                startup_logger.info(
+                    "Transaction graph loaded successfully",
+                    event_type="graph_loaded",
+                    metadata={
+                        "nodes": state.transaction_graph.number_of_nodes(),
+                        "edges": state.transaction_graph.number_of_edges(),
+                    },
+                )
                 state.graph_loaded = True
             else:
                 startup_logger.warning(
                     "Graph file not found at data/synthetic/graph.graphml",
                     event_type="graph_missing",
                 )
-                print("⚠ Graph file not found at data/synthetic/graph.graphml")
+                startup_logger.warning(
+                    "Graph file not found; graph-based detection disabled",
+                    event_type="graph_file_missing",
+                    metadata={"expected_path": "data/synthetic/graph.graphml"},
+                )
             
             if not graph_path:
                 state.graph_loaded = False
@@ -1097,13 +1118,15 @@ def _startup_ready(startup_logger):
         },
     )
     
-    print("=" * 80)
-    print("AegisGraph Sentinel 2.0 is ready")
-    print(f"Mode: {'PRODUCTION' if MODEL_AVAILABLE else 'DEMO'}")
-    print(f"Graph-based Detection: {'ENABLED' if state.graph_loaded else 'DISABLED'}")
-    print(f"Innovations: {'ENABLED' if INNOVATIONS_AVAILABLE else 'DISABLED'}")
-    print("API Documentation: http://localhost:8000/docs")
-    print("=" * 80)
+    startup_logger.info(
+        "AegisGraph Sentinel 2.0 is ready — API documentation: http://localhost:8000/docs",
+        event_type="startup_ready",
+        metadata={
+            "mode": "PRODUCTION" if MODEL_AVAILABLE else "DEMO",
+            "graph_detection": "ENABLED" if state.graph_loaded else "DISABLED",
+            "innovations": "ENABLED" if INNOVATIONS_AVAILABLE else "DISABLED",
+        },
+    )
 
 
 def _start_runtime_background_tasks():
@@ -1115,9 +1138,9 @@ def _start_runtime_background_tasks():
 
 
 async def _stop_runtime_background_tasks():
-    print("Shutting down AegisGraph Sentinel 2.0...")
+    _api_logger.info("Shutting down AegisGraph Sentinel 2.0...", event_type="shutdown_start")
     await state.tasks.cancel_all_tasks(timeout_seconds=10.0)
-    print("Background tasks stopped cleanly")
+    _api_logger.info("Background tasks stopped cleanly", event_type="shutdown_complete")
 
 
 def _run_scoring_pipeline(
@@ -1265,7 +1288,11 @@ async def lifespan(app: FastAPI):
         max_attempts=3
     )
 
-    lifecycle_manager.register_startup("startup_banner", _startup_banner, critical=False)
+    lifecycle_manager.register_startup(
+        "startup_banner",
+        lambda: _startup_banner(startup_logger),
+        critical=False,
+    )
     lifecycle_manager.register_startup(
         "load_configuration",
         lambda: _load_runtime_configuration(startup_logger),
