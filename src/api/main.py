@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from importlib import import_module, util as importlib_util
 from contextlib import asynccontextmanager
@@ -90,7 +91,10 @@ except ImportError as e:
     async def _rate_limit_exceeded_handler(request, exc):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
-    print(f"SlowAPI not available ({e}); rate limiting disabled")
+    import logging as _stdlib_logging
+    _stdlib_logging.getLogger(__name__).warning(
+        "SlowAPI not available (%s); rate limiting disabled", e
+    )
 
 
 
@@ -181,19 +185,45 @@ def _extract_legal_export_token(
 
 
 def _parse_request_timestamp(raw_timestamp: Optional[str]) -> Optional[datetime]:
+    """Parse a request timestamp from a string.
+
+    Accepts either a Unix epoch integer (seconds) or an ISO 8601 / RFC 3339
+    string.  Returns ``None`` for any value that cannot be parsed or that
+    falls outside the accepted epoch range, which prevents ``OSError`` /
+    ``OverflowError`` crashes on extreme platform-specific boundary values
+    (confirmed on macOS/Linux where ``datetime.fromtimestamp`` raises
+    ``OSError`` for values beyond the platform ``time_t`` range instead of
+    ``ValueError``).
+
+    Negative timestamps and pre-2001 epochs are explicitly rejected because
+    no legitimate request to this system can originate before the service
+    existed.
+    """
     if not raw_timestamp:
         return None
 
+    # Epoch seconds — only non-negative integers within a sensible range.
+    # Lower bound: 2001-09-09 (epoch 1_000_000_000) — no valid request
+    #              can originate before this service was conceived.
+    # Upper bound: 2100-01-01 (epoch 4_102_444_800) — rejects far-future
+    #              values that cause ValueError or OverflowError on some
+    #              platforms without relying on exception handling alone.
+    _MIN_VALID_EPOCH: int = 1_000_000_000   # 2001-09-09
+    _MAX_VALID_EPOCH: int = 4_102_444_800   # 2100-01-01
+
     candidate = raw_timestamp.strip()
     try:
-        if candidate.isdigit() or (candidate.startswith("-") and candidate[1:].isdigit()):
-            return datetime.fromtimestamp(int(candidate), tz=timezone.utc)
+        if candidate.isdigit():
+            ts_int = int(candidate)
+            if not (_MIN_VALID_EPOCH <= ts_int <= _MAX_VALID_EPOCH):
+                return None
+            return datetime.fromtimestamp(ts_int, tz=timezone.utc)
 
         parsed_timestamp = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
         if parsed_timestamp.tzinfo is None:
             parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
         return parsed_timestamp.astimezone(timezone.utc)
-    except ValueError:
+    except (ValueError, OSError, OverflowError):
         return None
 
 
@@ -285,6 +315,12 @@ from ..core import register_core_services, register_graph_services, register_inn
 _api_logger = get_logger("api")
 _audit_logger = get_audit_logger()
 settings = get_settings()
+
+# Allowlist pattern for WebSocket client_id path parameter.
+# Only alphanumeric characters, hyphens, and underscores are permitted,
+# with a maximum length of 64 characters, to prevent log injection and
+# memory exhaustion via crafted path values.
+_WS_CLIENT_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 
 
 class FraudDecision(str, Enum):
@@ -839,10 +875,11 @@ async def _honeypot_auto_release_loop(interval_seconds: int = 60):
 
 
 
-def _startup_banner():
-    print("=" * 80)
-    print("AegisGraph Sentinel 2.0 - Starting up...")
-    print("=" * 80)
+def _startup_banner(startup_logger):
+    startup_logger.info(
+        "AegisGraph Sentinel 2.0 - Starting up...",
+        event_type="startup_banner",
+    )
 
 
 def _validate_runtime_environment(startup_logger):
@@ -929,7 +966,14 @@ async def _load_graph_runtime_data(startup_logger):
                     event_type="neo4j_initialized",
                     metadata={"uri": uri, "user": user},
                 )
-                print(f"✓ Initialized active Neo4j database integration: {provider.number_of_nodes} nodes, {provider.number_of_edges} edges")
+                startup_logger.info(
+                    "Neo4j database integration active",
+                    event_type="neo4j_active",
+                    metadata={
+                        "nodes": provider.number_of_nodes,
+                        "edges": provider.number_of_edges,
+                    },
+                )
             else:
                 startup_logger.warning(
                     "Neo4j enabled but connection failed. Falling back to static graph files.",
@@ -979,15 +1023,25 @@ async def _load_graph_runtime_data(startup_logger):
                         "edges": state.transaction_graph.number_of_edges(),
                     },
                 )
-                print(f"✓ Loaded verified transaction graph: {state.transaction_graph.number_of_nodes()} nodes, "
-                      f"{state.transaction_graph.number_of_edges()} edges")
+                startup_logger.info(
+                    "Transaction graph loaded successfully",
+                    event_type="graph_loaded",
+                    metadata={
+                        "nodes": state.transaction_graph.number_of_nodes(),
+                        "edges": state.transaction_graph.number_of_edges(),
+                    },
+                )
                 state.graph_loaded = True
             else:
                 startup_logger.warning(
                     "Graph file not found at data/synthetic/graph.graphml",
                     event_type="graph_missing",
                 )
-                print("⚠ Graph file not found at data/synthetic/graph.graphml")
+                startup_logger.warning(
+                    "Graph file not found; graph-based detection disabled",
+                    event_type="graph_file_missing",
+                    metadata={"expected_path": "data/synthetic/graph.graphml"},
+                )
             
             if not graph_path:
                 state.graph_loaded = False
@@ -1099,13 +1153,15 @@ def _startup_ready(startup_logger):
         },
     )
     
-    print("=" * 80)
-    print("AegisGraph Sentinel 2.0 is ready")
-    print(f"Mode: {'PRODUCTION' if MODEL_AVAILABLE else 'DEMO'}")
-    print(f"Graph-based Detection: {'ENABLED' if state.graph_loaded else 'DISABLED'}")
-    print(f"Innovations: {'ENABLED' if INNOVATIONS_AVAILABLE else 'DISABLED'}")
-    print("API Documentation: http://localhost:8000/docs")
-    print("=" * 80)
+    startup_logger.info(
+        "AegisGraph Sentinel 2.0 is ready — API documentation: http://localhost:8000/docs",
+        event_type="startup_ready",
+        metadata={
+            "mode": "PRODUCTION" if MODEL_AVAILABLE else "DEMO",
+            "graph_detection": "ENABLED" if state.graph_loaded else "DISABLED",
+            "innovations": "ENABLED" if INNOVATIONS_AVAILABLE else "DISABLED",
+        },
+    )
 
 
 def _start_runtime_background_tasks():
@@ -1117,9 +1173,9 @@ def _start_runtime_background_tasks():
 
 
 async def _stop_runtime_background_tasks():
-    print("Shutting down AegisGraph Sentinel 2.0...")
+    _api_logger.info("Shutting down AegisGraph Sentinel 2.0...", event_type="shutdown_start")
     await state.tasks.cancel_all_tasks(timeout_seconds=10.0)
-    print("Background tasks stopped cleanly")
+    _api_logger.info("Background tasks stopped cleanly", event_type="shutdown_complete")
 
 
 def _run_scoring_pipeline(
@@ -1267,7 +1323,11 @@ async def lifespan(app: FastAPI):
         max_attempts=3
     )
 
-    lifecycle_manager.register_startup("startup_banner", _startup_banner, critical=False)
+    lifecycle_manager.register_startup(
+        "startup_banner",
+        lambda: _startup_banner(startup_logger),
+        critical=False,
+    )
     lifecycle_manager.register_startup(
         "load_configuration",
         lambda: _load_runtime_configuration(startup_logger),
@@ -1929,6 +1989,18 @@ async def fraud_stream_websocket(websocket: WebSocket, client_id: str):
     Accepts WebSocket connections and streams fraud decisions.
     Requires periodic 'ping' messages as heartbeats.
     """
+    # Validate client_id before accepting the connection.
+    # Rejects values that are empty, overly long (>64 chars), or contain
+    # characters that could cause log injection or memory exhaustion.
+    if not _WS_CLIENT_ID_RE.match(client_id):
+        _api_logger.warning(
+            "WebSocket connection rejected: invalid client_id format",
+            event_type="ws_invalid_client_id",
+            metadata={"client_id_length": len(client_id)},
+        )
+        await websocket.close(code=1008, reason="Invalid client_id: use alphanumeric, hyphens, or underscores (max 64 chars)")
+        return
+
     try:
         require_role(Role.ANALYST)(websocket.headers.get("X-API-Key"))
     except HTTPException:
