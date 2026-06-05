@@ -2414,9 +2414,9 @@ async def export_legal_evidence(
     except HTTPException:
         raise
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        _raise_internal_server_error("Evidence export", exc)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        _raise_internal_server_error("Evidence export", exc)
     except Exception as exc:
         _raise_internal_server_error("Evidence export", exc)
 
