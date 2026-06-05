@@ -96,7 +96,14 @@ except ImportError as e:
 
 from ..config.settings import get_settings
 from ..config.validation import validate_environment
-from ..exceptions import register_exception_handlers, register_observability_middleware
+from ..exceptions import (
+    AegisException,
+    register_exception_handlers,
+    register_observability_middleware,
+    ServiceUnavailableException,
+    ValidationException,
+    ProcessingException,
+)
 from ..observability import get_audit_logger, get_logger
 from ..runtime import LifecycleManager, RuntimeState, RecoveryManager, RuntimeWatchdog
 from ..runtime.background_tasks import honeypot_auto_release_loop
@@ -127,7 +134,7 @@ from .schemas import (
     VoiceAnalysisResponse,
     HoneypotStatus,
 )
-from .security import require_api_key
+from .security import require_api_key, Role, require_role
 from .validators import StrictRateLimit
 
 
@@ -631,6 +638,8 @@ _generate_explanation_impl = None
 
 
 def _resolve_model_components() -> tuple[Any, Any, bool]:
+    if not MODEL_AVAILABLE:
+        return _fallback_compute_risk_score, _fallback_generate_explanation, False
     try:
         from ..inference.risk_scorer import compute_risk_score as model_compute_risk_score
         from ..inference.explainer import generate_explanation as model_generate_explanation
@@ -668,6 +677,7 @@ def _is_module_available(module_name: str) -> bool:
 MODEL_AVAILABLE = (
     _is_module_available("src.inference.risk_scorer")
     and _is_module_available("src.inference.explainer")
+    and _is_module_available("torch_geometric")
 )
 
 INNOVATIONS_AVAILABLE = all(
@@ -1041,31 +1051,14 @@ def _initialize_innovation_runtime(startup_logger):
         state.runtime.health_monitor.register_service("blockchain_manager")
         state.runtime.health_monitor.register_service("aegis_oracle")
 
-    # NOTE: LateralMovementDetector is intentionally kept on the
-    # eager startup path (unlike other innovation services which
-    # are lazy). It connects to Redis on init, and we want that
-    # connection failure surfaced at boot rather than silently
-    # degrading on the first fraud request. A follow-up PR can
-    # move this to the lazy provider pattern if full consistency
-    # is preferred.
+    # NOTE: LateralMovementDetector is intentionally deferred
+    # to first request via get_lateral_movement_detector() in
+    # src/api/dependencies/subsystems.py. Construction is
+    # guarded by an asyncio.Lock to prevent double-init.
     if LATERAL_MOVEMENT_AVAILABLE:
-        try:
-            detector_cls = LateralMovementDetector
-            if detector_cls is None:
-                from src.features.lateral_movement import LateralMovementDetector as detector_cls
-            _lmd = detector_cls()
-            state.services.register_service("lateral_movement_detector", _lmd, replace=True)
-            lateral_movement_detector = _lmd
-            state.runtime.health_monitor.register_service("lateral_movement_detector")
-            state.runtime.health_monitor.mark_healthy("lateral_movement_detector")
-            startup_logger.info("Lateral Movement Detector initialized", event_type="innovation_ready")
-        except Exception as e:
-            state.runtime.health_monitor.register_service("lateral_movement_detector")
-            state.runtime.health_monitor.mark_failed("lateral_movement_detector", error=str(e))
-            startup_logger.warning(
-                f"Lateral movement initialization failed: {e}",
-                event_type="innovation_init_failed",
-            )
+        state.runtime.health_monitor.register_service(
+            "lateral_movement_detector"
+        )
     else:
         startup_logger.warning("Innovation modules not available", event_type="innovations_unavailable")
 
@@ -1401,7 +1394,7 @@ async def health_check(verbose: bool = False):
     return _build_health_response(include_details=verbose)
 
 
-@app.get("/stats", response_model=StatsResponse, tags=["General"], dependencies=[Depends(require_api_key)])
+@app.get("/stats", response_model=StatsResponse, tags=["General"], dependencies=[Depends(require_role(Role.AUDITOR))])
 async def get_stats():
     """
     Get service statistics
@@ -1433,7 +1426,7 @@ async def get_stats():
     tags=["Fraud Detection"],
     summary="Check transaction for fraud",
     description="Analyze a single transaction for fraud risk using HTGNN and behavioral biometrics",
-    dependencies=[Depends(require_api_key), Depends(StrictRateLimit(ip_limit=60, api_key_limit=300))]
+    dependencies=[Depends(require_role(Role.ANALYST)), Depends(StrictRateLimit(ip_limit=60, api_key_limit=300))]
 )
 async def check_transaction(
     request: TransactionCheckRequest,
@@ -1725,7 +1718,7 @@ async def check_transaction(
     tags=["Explainability - Aegis-Oracle"],
     summary="Generate AI-explainable decision explanation",
     description="Innovation 5: Aegis-Oracle generates regulatory-compliant explanations for all fraud decisions. Includes causal factors, evidence,  and legal admissibility.",
-    dependencies=[Depends(require_api_key)]
+    dependencies=[Depends(require_role(Role.ANALYST))]
 )
 async def explain_transaction(
     request: ExplainRequest,
@@ -1735,7 +1728,7 @@ async def explain_transaction(
     # missing/invalid request bodies in tests. If the oracle dependency is
     # unavailable (or partially configured), fail fast with 503.
     if aegis_oracle is None:
-        raise HTTPException(status_code=503, detail="Aegis-Oracle unavailable")
+        raise ServiceUnavailableException("Aegis-Oracle unavailable")
     """
     Generate comprehensive explanation for a fraud decision
     
@@ -1795,9 +1788,14 @@ async def explain_transaction(
         return explanation
         
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid explainability request") from exc
+        raise ValidationException("Invalid explainability request") from exc
     except Exception as exc:
-        _raise_internal_server_error("Explainability", exc)
+        _api_logger.error(
+            f"Explainability failed: {exc}",
+            event_type="api_internal_error",
+            metadata={"operation": "Explainability", "error_type": type(exc).__name__},
+        )
+        raise AegisException("Internal Server Error")
 
 
 # Enhanced Aegis-Oracle endpoint
@@ -1806,7 +1804,7 @@ async def explain_transaction(
     tags=["Explainability - Aegis-Oracle"],
     summary="Get comprehensive AI reasoning for fraud decisions",
     description="Advanced Aegis-Oracle endpoint with full forensic analysis and causal reasoning",
-    dependencies=[Depends(require_api_key)]
+    dependencies=[Depends(require_role(Role.ANALYST))]
 )
 async def oracle_explain_detailed(
     request: OracleExplainRequest,
@@ -1848,9 +1846,14 @@ async def oracle_explain_detailed(
         }
         
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid oracle explainability request") from exc
+        raise ValidationException("Invalid oracle explainability request") from exc
     except Exception as exc:
-        _raise_internal_server_error("Oracle explainability", exc)
+        _api_logger.error(
+            f"Oracle explainability failed: {exc}",
+            event_type="api_internal_error",
+            metadata={"operation": "Oracle explainability", "error_type": type(exc).__name__},
+        )
+        raise AegisException("Internal Server Error")
 
 # DEBUG only: manually activate a honeypot via API.
 # This endpoint is ONLY registered when DEBUG env var is set to "true".
@@ -1865,7 +1868,7 @@ if settings.runtime.debug:
         tags=["Debug"],
         summary="Force honeypot activation (DEBUG mode only)",
         description="Available only when DEBUG env var is 'true'. For testing only.",
-        dependencies=[Depends(require_api_key)],
+        dependencies=[Depends(require_role(Role.ADMIN))],
     )
     def debug_activate_honeypot(
         request: HoneypotDebugRequest,
@@ -1890,13 +1893,19 @@ if settings.runtime.debug:
         except Exception as e:
             _raise_internal_server_error("Debug honeypot activation", e)
 
-@app.websocket("/api/v1/fraud/stream/{client_id}", dependencies=[Depends(require_api_key)])
+@app.websocket("/api/v1/fraud/stream/{client_id}")
 async def fraud_stream_websocket(websocket: WebSocket, client_id: str):
     """
     Realtime fraud monitoring stream.
     Accepts WebSocket connections and streams fraud decisions.
     Requires periodic 'ping' messages as heartbeats.
     """
+    try:
+        require_role(Role.ANALYST)(websocket.headers.get("X-API-Key"))
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+
     accepted = await ws_manager.connect(websocket, client_id)
     if not accepted:
         return
@@ -1915,7 +1924,7 @@ async def fraud_stream_websocket(websocket: WebSocket, client_id: str):
     tags=["Fraud Detection"],
     summary="Check multiple transactions",
     description="Batch processing of multiple transactions for fraud detection",
-    dependencies=[Depends(require_api_key), Depends(StrictRateLimit(ip_limit=10, api_key_limit=50))]
+    dependencies=[Depends(require_role(Role.ANALYST)), Depends(StrictRateLimit(ip_limit=10, api_key_limit=50))]
 )
 async def check_batch_transactions(request: BatchTransactionRequest):
     """
@@ -1984,7 +1993,7 @@ async def check_batch_transactions(request: BatchTransactionRequest):
     return StreamingResponse(_stream_batch_response(), media_type="application/json")
 
 
-@app.get("/api/v1/model/info", tags=["Model"], dependencies=[Depends(require_api_key)])
+@app.get("/api/v1/model/info", tags=["Model"], dependencies=[Depends(require_role(Role.VIEWER))])
 async def get_model_info():
     """
     Get information about the loaded model
@@ -2022,7 +2031,7 @@ async def get_model_info():
     tags=["Innovation - Voice Stress"],
     summary="Analyze voice stress during transaction",
     description="Innovation 5: Real-time voice stress analysis to detect coercion or AI generation",
-    dependencies=[Depends(require_api_key), Depends(StrictRateLimit(ip_limit=5, api_key_limit=20))]
+    dependencies=[Depends(require_role(Role.ANALYST)), Depends(StrictRateLimit(ip_limit=5, api_key_limit=20))]
 )
 @limiter.limit("10/minute")
 async def analyze_voice(
@@ -2098,7 +2107,7 @@ async def analyze_voice(
     tags=["Innovation - Predictive Mule"],
     summary="Score account opening for mule risk",
     description="Innovation 4: Predicts mule accounts before first transaction using 12 features",
-    dependencies=[Depends(require_api_key)]
+    dependencies=[Depends(require_role(Role.ANALYST))]
 )
 def score_account_opening(
     request: AccountOpeningRequest,
@@ -2165,7 +2174,7 @@ def score_account_opening(
     tags=["Innovation - Predictive Mule"],
     summary="Assess account mule risk",
     description="Innovation 3: Alias for mule assessment endpoint",
-    dependencies=[Depends(require_api_key)]
+    dependencies=[Depends(require_role(Role.ANALYST))]
 )
 def assess_mule_risk(request: AccountOpeningRequest):
     """Alias endpoint for mule assessment"""
@@ -2178,7 +2187,7 @@ def assess_mule_risk(request: AccountOpeningRequest):
     tags=["Innovation - Honeypot Escrow"],
     summary="List active honeypot traps",
     description="Innovation 2: View all active deceptive containment operations",
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 async def list_active_honeypots(
     x_honeypot_token: Optional[str] = Header(default=None, alias="X-Honeypot-Token"),
@@ -2230,7 +2239,7 @@ async def list_active_honeypots(
     tags=["Innovation - Honeypot Escrow"],
     summary="Get honeypot system statistics",
     description="Innovation 2: View performance metrics including arrest rate and recovery amount",
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_role(Role.ADMIN))],
 )
 async def get_honeypot_stats(
     x_honeypot_token: Optional[str] = Header(default=None, alias="X-Honeypot-Token"),
@@ -2267,7 +2276,7 @@ async def get_honeypot_stats(
     tags=["Innovation - Blockchain Evidence"],
     summary="Seal evidence in blockchain",
     description="Innovation 6: Create immutable evidence record for legal admissibility",
-    dependencies=[Depends(require_api_key)]
+    dependencies=[Depends(require_role(Role.ANALYST))]
 )
 async def seal_evidence(
     request: BlockchainSealRequest,
@@ -2314,7 +2323,7 @@ async def seal_evidence(
     tags=["Innovation - Blockchain Evidence"],
     summary="Verify blockchain evidence",
     description="Innovation 6: Verify integrity and authenticity of sealed evidence",
-    dependencies=[Depends(require_api_key)]
+    dependencies=[Depends(require_role(Role.VIEWER))]
 )
 async def verify_evidence(
     evidence_id: str,
@@ -2353,7 +2362,8 @@ async def verify_evidence(
     response_model=LegalExportResponse,
     tags=["Innovation - Blockchain Evidence"],
     summary="Export evidence for legal proceedings",
-    description="Innovation 6: Generate court-admissible evidence package"
+    description="Innovation 6: Generate court-admissible evidence package",
+    dependencies=[Depends(require_role(Role.ADMIN))]
 )
 @limiter.limit("5/minute")
 async def export_legal_evidence(
@@ -2440,7 +2450,7 @@ def _run_blast_radius(
         "**Contagion Score formula:** `Sc = Σ (edge_weight / depth²)`\n\n"
         "**Risk tiers:** CRITICAL ≥ 0.70 | HIGH ≥ 0.35 | SUSPICIOUS ≥ 0.10"
     ),
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_role(Role.ANALYST))],
 )
 async def blast_radius_analysis(request: BlastRadiusRequest):
     """
