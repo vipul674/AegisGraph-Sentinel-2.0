@@ -2119,10 +2119,6 @@ async def check_batch_transactions(request: BatchTransactionRequest):
     batch_subgraph_cache: Dict = {}
     batch_subgraph_lock: Lock = Lock()
 
-    # Set context variables for use in check_transaction and its callees
-    token_cache = _batch_subgraph_cache.set(batch_subgraph_cache)
-    token_lock = _batch_subgraph_lock.set(batch_subgraph_lock)
-
     async def _process_transaction(txn_request):
         async with semaphore:
             return await check_transaction(txn_request)
@@ -2176,6 +2172,15 @@ async def check_batch_transactions(request: BatchTransactionRequest):
         )
 
     async def _stream_batch_response():
+        # Set the context variables inside the streaming generator so that
+        # the set and the matching reset both run in the same context. A
+        # StreamingResponse body iterator executes in a context copied by
+        # Starlette, so a token created in the endpoint context cannot be
+        # reset here. Child tasks created during iteration copy this context
+        # after the values are set, so the shared cache stays visible to
+        # every check_transaction() call.
+        token_cache = _batch_subgraph_cache.set(batch_subgraph_cache)
+        token_lock = _batch_subgraph_lock.set(batch_subgraph_lock)
         try:
             async for chunk in _stream_batch_response_impl():
                 yield chunk
