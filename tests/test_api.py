@@ -134,7 +134,8 @@ class TestHealthEndpoint:
         assert "graph_loaded" not in data
         assert "innovations_available" not in data
         assert "requests_processed" not in data
-        assert "uptime_seconds" not in data
+        assert "uptime_seconds" in data
+        assert "version" in data
 
     def test_api_v1_health_public_is_minimal(self):
         """Test /api/v1/health returns only sanitized public fields"""
@@ -148,7 +149,8 @@ class TestHealthEndpoint:
         assert "graph_loaded" not in data
         assert "innovations_available" not in data
         assert "requests_processed" not in data
-        assert "uptime_seconds" not in data
+        assert "uptime_seconds" in data
+        assert "version" in data
 
     def test_verbose_health_requires_auth(self, monkeypatch):
         """Verbose health requests must be rejected without an API key."""

@@ -79,7 +79,8 @@ def test_health_smoke(api_client):
     assert "graph_loaded" not in body
     assert "innovations_available" not in body
     assert "requests_processed" not in body
-    assert "uptime_seconds" not in body
+    assert "uptime_seconds" in body
+    assert "version" in body
 
 
 def test_debug_honeypot_route_is_not_registered_in_production(monkeypatch):
