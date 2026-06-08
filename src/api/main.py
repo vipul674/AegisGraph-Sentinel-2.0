@@ -1905,6 +1905,32 @@ async def check_transaction(
             },
         )
 
+        if internal_decision == "BLOCK":
+            dispatcher = getattr(state.runtime, "dispatcher", None)
+            if dispatcher is not None:
+                from ..runtime.events import SentinelAlertEvent
+                dispatcher.dispatch(
+                    SentinelAlertEvent(
+                        source="api.fraud_check",
+                        severity="HIGH",
+                        title="Fraud Transaction Blocked",
+                        message=(
+                            f"Transaction {request.transaction_id} was automatically blocked "
+                            f"due to high risk score ({risk_result['risk_score']:.4f})."
+                        ),
+                        payload={
+                            "transaction_id": request.transaction_id,
+                            "risk_score": risk_result['risk_score'],
+                            "decision": decision,
+                            "amount": request.amount,
+                            "currency": request.currency,
+                            "source_account": request.source_account,
+                            "target_account": request.target_account,
+                            "explanation": explanation_result['explanation'],
+                        }
+                    )
+                )
+
         return response
     
     except ValueError as exc:
