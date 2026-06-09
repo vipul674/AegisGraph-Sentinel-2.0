@@ -934,3 +934,142 @@ class CaseDashboardResponse(BaseModel):
     escalated_cases: int
     by_status: Dict[str, int]
     by_priority: Dict[str, int]
+
+
+# ============================================================================
+# ENTITY RESOLUTION SCHEMAS (Phase 9)
+# ============================================================================
+
+class EntityLinkRequest(BaseModel):
+    """Request to link two entities in the knowledge graph."""
+    source_entity_id: Optional[str] = Field(default=None, description="Source entity ID (optional if source_value provided)")
+    source_entity_type: str = Field(default="ACCOUNT", description="Source entity type: ACCOUNT, DEVICE, IP_ADDRESS, PHONE_NUMBER, EMAIL, WALLET, etc.")
+    source_value: Optional[str] = Field(default=None, description="Source entity value (used if source_entity_id not provided)")
+    target_entity_id: Optional[str] = Field(default=None, description="Target entity ID (optional if target_value provided)")
+    target_entity_type: str = Field(default="ACCOUNT", description="Target entity type: ACCOUNT, DEVICE, IP_ADDRESS, PHONE_NUMBER, EMAIL, WALLET, etc.")
+    target_value: Optional[str] = Field(default=None, description="Target entity value (used if target_entity_id not provided)")
+    relationship_type: str = Field(default="SHARED_DEVICE", description="Relationship type: SHARED_DEVICE, SHARED_IP, SHARED_PHONE, SHARED_EMAIL, WALLET_OWNER, etc.")
+    confidence_score: float = Field(default=0.5, ge=0.0, le=1.0, description="Relationship confidence score")
+    evidence: Optional[List[str]] = Field(default_factory=list, description="Evidence supporting the relationship")
+
+    @field_validator("source_entity_type", "target_entity_type")
+    @classmethod
+    def validate_entity_type(cls, v: str) -> str:
+        valid_types = {"ACCOUNT", "DEVICE", "IP_ADDRESS", "PHONE_NUMBER", "EMAIL", "WALLET", "BANK_ACCOUNT", "CARD", "TRANSACTION", "LOCATION"}
+        if v.upper() not in valid_types:
+            raise ValueError(f"entity_type must be one of: {valid_types}")
+        return v.upper()
+
+    @field_validator("relationship_type")
+    @classmethod
+    def validate_relationship_type(cls, v: str) -> str:
+        valid_types = {"SHARED_DEVICE", "SHARED_IP", "SHARED_PHONE", "SHARED_EMAIL", "WALLET_OWNER", "WALLET_BENEFICIARY", "TRANSFER_FROM", "TRANSFER_TO", "SAME_PERSON", "FAMILY_MEMBER", "BUSINESS_ASSOCIATE", "CASH_OUT", "MULE_ACCOUNT"}
+        if v.upper() not in valid_types:
+            raise ValueError(f"relationship_type must be one of: {valid_types}")
+        return v.upper()
+
+
+class EntityResponse(BaseModel):
+    """Response containing entity information."""
+    id: str
+    entity_type: str
+    value: str
+    risk_score: float
+    tags: List[str]
+    created_at: str
+    updated_at: str
+
+
+class EntityRelationshipResponse(BaseModel):
+    """Response containing relationship information."""
+    source_id: str
+    target_id: str
+    relationship_type: str
+    confidence_score: float
+    evidence: List[str]
+    created_at: str
+
+
+class EntityLinkResponse(BaseModel):
+    """Response from linking entities."""
+    success: bool
+    relationship: EntityRelationshipResponse
+    source_entity: EntityResponse
+    target_entity: EntityResponse
+    is_new_relationship: bool
+    is_new_source_entity: bool
+    is_new_target_entity: bool
+    processing_time_ms: float
+
+
+class EntityNetworkResponse(BaseModel):
+    """Response containing entity network information."""
+    root_entity_id: str
+    entities: List[Dict[str, Any]]
+    relationships: List[Dict[str, Any]]
+    depth: int
+    total_entities: int
+    total_relationships: int
+    processing_time_ms: float
+
+
+class FraudClusterResponse(BaseModel):
+    """Response containing fraud cluster information."""
+    cluster_id: str
+    entity_ids: List[str]
+    risk_score: float
+    tags: List[str]
+    created_at: str
+    updated_at: str
+    member_count: int
+
+
+class HighRiskRingsResponse(BaseModel):
+    """Response containing high-risk fraud rings."""
+    rings: List[FraudClusterResponse]
+    total_rings: int
+    critical_count: int
+    high_count: int
+    processing_time_ms: float
+
+
+class RiskPropagationNode(BaseModel):
+    """A node affected by risk propagation."""
+    node_id: str
+    entity_type: str
+    propagated_risk: float
+    tier: str
+
+
+class ContagionReportResponse(BaseModel):
+    """Response containing risk contagion report."""
+    source_entity_id: str
+    source_entity_type: str
+    source_risk_score: float
+    source_contagion_score: float
+    total_affected: int
+    max_depth: int
+    critical: List[RiskPropagationNode]
+    high: List[RiskPropagationNode]
+    medium: List[RiskPropagationNode]
+    low: List[RiskPropagationNode]
+    processing_time_ms: float
+
+
+class ClusterDetailResponse(BaseModel):
+    """Response containing detailed cluster information."""
+    cluster: FraudClusterResponse
+    entities: List[EntityResponse]
+    relationships: List[EntityRelationshipResponse]
+    processing_time_ms: float
+
+
+class GraphStatsResponse(BaseModel):
+    """Response containing knowledge graph statistics."""
+    current_entities: int
+    current_relationships: int
+    current_clusters: int
+    cache_utilization: float
+    graph_density: float
+    graph_connected_components: int
+    processing_time_ms: float

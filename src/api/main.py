@@ -162,6 +162,18 @@ from .schemas import (
     CreateCaseRequest,
     FraudCaseResponse,
     UpdateCaseRequest,
+    # Entity Resolution (Phase 9)
+    EntityLinkRequest,
+    EntityLinkResponse,
+    EntityNetworkResponse,
+    EntityResponse,
+    EntityRelationshipResponse,
+    FraudClusterResponse,
+    HighRiskRingsResponse,
+    ContagionReportResponse,
+    ClusterDetailResponse,
+    GraphStatsResponse,
+    RiskPropagationNode,
 )
 from ..case_management import get_case_store
 from ..case_management.models import CasePriority, CaseStatus, EvidenceType, validate_status_transition
@@ -3112,6 +3124,434 @@ async def get_case_timeline(case_id: str):
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ============================================================================
+# ENTITY RESOLUTION ENDPOINTS (Phase 9)
+# ============================================================================
+
+@app.post(
+    "/api/v1/entity-resolution/link",
+    response_model=EntityLinkResponse,
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Link two entities in the knowledge graph",
+)
+async def link_entity(request: EntityLinkRequest):
+    """Link two entities together with a relationship in the knowledge graph.
+    
+    This endpoint creates or updates entities and establishes a relationship
+    between them based on the provided parameters.
+    """
+    import time
+    from src.entity_resolution import get_entity_resolver, get_entity_store
+    from src.entity_resolution.models import EntityType, RelationshipType
+    from src.entity_resolution.entity_resolver import LinkRequest
+    
+    start_time = time.time()
+    
+    # Get the entity resolver
+    resolver = get_entity_resolver()
+    
+    # Create link request
+    link_req = LinkRequest(
+        source_entity_id=request.source_entity_id,
+        source_entity_type=EntityType(request.source_entity_type) if request.source_entity_type else None,
+        source_value=request.source_value,
+        target_entity_id=request.target_entity_id,
+        target_entity_type=EntityType(request.target_entity_type) if request.target_entity_type else None,
+        target_value=request.target_value,
+        relationship_type=RelationshipType(request.relationship_type),
+        confidence_score=request.confidence_score,
+        evidence=request.evidence or [],
+    )
+    
+    # Link entities
+    result = resolver.link_entities(link_req)
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return EntityLinkResponse(
+        success=True,
+        relationship=EntityRelationshipResponse(
+            source_id=result.relationship.source_id,
+            target_id=result.relationship.target_id,
+            relationship_type=result.relationship.relationship_type.value,
+            confidence_score=result.relationship.confidence_score,
+            evidence=result.relationship.evidence,
+            created_at=result.relationship.created_at.isoformat(),
+        ),
+        source_entity=EntityResponse(
+            id=result.source_entity.id,
+            entity_type=result.source_entity.entity_type.value,
+            value=result.source_entity.value,
+            risk_score=result.source_entity.risk_score,
+            tags=list(result.source_entity.tags),
+            created_at=result.source_entity.created_at.isoformat(),
+            updated_at=result.source_entity.updated_at.isoformat(),
+        ),
+        target_entity=EntityResponse(
+            id=result.target_entity.id,
+            entity_type=result.target_entity.entity_type.value,
+            value=result.target_entity.value,
+            risk_score=result.target_entity.risk_score,
+            tags=list(result.target_entity.tags),
+            created_at=result.target_entity.created_at.isoformat(),
+            updated_at=result.target_entity.updated_at.isoformat(),
+        ),
+        is_new_relationship=result.is_new_relationship,
+        is_new_source_entity=result.is_new_source_entity,
+        is_new_target_entity=result.is_new_target_entity,
+        processing_time_ms=processing_time,
+    )
+
+
+@app.get(
+    "/api/v1/entity-resolution/entity/{entity_id}",
+    response_model=EntityResponse,
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get entity details by ID",
+)
+async def get_entity(entity_id: str):
+    """Get details of a specific entity from the knowledge graph."""
+    from src.entity_resolution import get_entity_store
+    
+    store = get_entity_store()
+    entity = store.get_entity(entity_id)
+    
+    if entity is None:
+        raise HTTPException(status_code=404, detail=f"Entity '{entity_id}' not found")
+    
+    return EntityResponse(
+        id=entity.id,
+        entity_type=entity.entity_type.value,
+        value=entity.value,
+        risk_score=entity.risk_score,
+        tags=list(entity.tags),
+        created_at=entity.created_at.isoformat(),
+        updated_at=entity.updated_at.isoformat(),
+    )
+
+
+@app.get(
+    "/api/v1/entity-resolution/network/{entity_id}",
+    response_model=EntityNetworkResponse,
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get entity network/connections",
+)
+async def get_entity_network(entity_id: str, max_depth: int = Query(default=3, ge=1, le=10)):
+    """Get the network of entities connected to a given entity."""
+    import time
+    from src.entity_resolution import get_entity_resolver
+    
+    start_time = time.time()
+    
+    resolver = get_entity_resolver()
+    network = resolver.get_entity_network(entity_id, max_depth=max_depth)
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return EntityNetworkResponse(
+        root_entity_id=network["root_entity_id"],
+        entities=network["entities"],
+        relationships=network["relationships"],
+        depth=network["depth"],
+        total_entities=network["total_entities"],
+        total_relationships=network["total_relationships"],
+        processing_time_ms=processing_time,
+    )
+
+
+@app.get(
+    "/api/v1/entity-resolution/high-risk-rings",
+    response_model=HighRiskRingsResponse,
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get all high-risk fraud rings",
+)
+async def get_high_risk_rings(threshold: float = Query(default=0.7, ge=0.0, le=1.0)):
+    """Get all fraud rings with risk score above the threshold."""
+    import time
+    from src.entity_resolution import get_cluster_engine
+    
+    start_time = time.time()
+    
+    engine = get_cluster_engine()
+    rings = engine.get_high_risk_rings(threshold=threshold)
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    # Count by tier
+    critical_count = sum(1 for r in rings if r.risk_score >= 0.8)
+    high_count = sum(1 for r in rings if 0.6 <= r.risk_score < 0.8)
+    
+    return HighRiskRingsResponse(
+        rings=[
+            FraudClusterResponse(
+                cluster_id=r.cluster_id,
+                entity_ids=list(r.entity_ids),
+                risk_score=r.risk_score,
+                tags=list(r.tags),
+                created_at=r.created_at.isoformat(),
+                updated_at=r.updated_at.isoformat(),
+                member_count=len(r.entity_ids),
+            )
+            for r in rings
+        ],
+        total_rings=len(rings),
+        critical_count=critical_count,
+        high_count=high_count,
+        processing_time_ms=processing_time,
+    )
+
+
+@app.get(
+    "/api/v1/entity-resolution/cluster/{cluster_id}",
+    response_model=ClusterDetailResponse,
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get fraud cluster details",
+)
+async def get_cluster_detail(cluster_id: str):
+    """Get detailed information about a fraud cluster."""
+    import time
+    from src.entity_resolution import get_cluster_engine
+    
+    start_time = time.time()
+    
+    engine = get_cluster_engine()
+    cluster = engine._store.get_cluster(cluster_id)
+    
+    if cluster is None:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found")
+    
+    # Get cluster entities
+    entities = engine.get_ring_members(cluster_id)
+    
+    # Get cluster relationships
+    relationships = engine.get_ring_relationships(cluster_id)
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return ClusterDetailResponse(
+        cluster=FraudClusterResponse(
+            cluster_id=cluster.cluster_id,
+            entity_ids=list(cluster.entity_ids),
+            risk_score=cluster.risk_score,
+            tags=list(cluster.tags),
+            created_at=cluster.created_at.isoformat(),
+            updated_at=cluster.updated_at.isoformat(),
+            member_count=len(cluster.entity_ids),
+        ),
+        entities=[
+            EntityResponse(
+                id=e.id,
+                entity_type=e.entity_type.value,
+                value=e.value,
+                risk_score=e.risk_score,
+                tags=list(e.tags),
+                created_at=e.created_at.isoformat(),
+                updated_at=e.updated_at.isoformat(),
+            )
+            for e in entities
+        ],
+        relationships=[
+            EntityRelationshipResponse(
+                source_id=r.source_id,
+                target_id=r.target_id,
+                relationship_type=r.relationship_type.value,
+                confidence_score=r.confidence_score,
+                evidence=r.evidence,
+                created_at=r.created_at.isoformat(),
+            )
+            for r in relationships
+        ],
+        processing_time_ms=processing_time,
+    )
+
+
+@app.get(
+    "/api/v1/entity-resolution/contagion/{entity_id}",
+    response_model=ContagionReportResponse,
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get risk contagion report for entity",
+)
+async def get_contagion_report(entity_id: str, max_depth: int = Query(default=3, ge=1, le=10)):
+    """Generate a detailed risk contagion report for an entity."""
+    import time
+    from src.entity_resolution import get_risk_propagator
+    
+    start_time = time.time()
+    
+    propagator = get_risk_propagator()
+    report = propagator.get_contagion_report(entity_id, max_depth=max_depth)
+    
+    if "error" in report:
+        raise HTTPException(status_code=404, detail=report["error"])
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return ContagionReportResponse(
+        source_entity_id=report["source_entity_id"],
+        source_entity_type=report["source_entity_type"],
+        source_risk_score=report["source_risk_score"],
+        source_contagion_score=report["source_contagion_score"],
+        total_affected=report["total_affected"],
+        max_depth=report["max_depth"],
+        critical=[
+            RiskPropagationNode(
+                node_id=n["entity_id"],
+                entity_type=n["entity_type"],
+                propagated_risk=n["propagated_risk"],
+                tier=n["tier"],
+            )
+            for n in report["critical"]
+        ],
+        high=[
+            RiskPropagationNode(
+                node_id=n["entity_id"],
+                entity_type=n["entity_type"],
+                propagated_risk=n["propagated_risk"],
+                tier=n["tier"],
+            )
+            for n in report["high"]
+        ],
+        medium=[
+            RiskPropagationNode(
+                node_id=n["entity_id"],
+                entity_type=n["entity_type"],
+                propagated_risk=n["propagated_risk"],
+                tier=n["tier"],
+            )
+            for n in report["medium"]
+        ],
+        low=[
+            RiskPropagationNode(
+                node_id=n["entity_id"],
+                entity_type=n["entity_type"],
+                propagated_risk=n["propagated_risk"],
+                tier=n["tier"],
+            )
+            for n in report["low"]
+        ],
+        processing_time_ms=processing_time,
+    )
+
+
+@app.get(
+    "/api/v1/entity-resolution/stats",
+    response_model=GraphStatsResponse,
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get knowledge graph statistics",
+)
+async def get_graph_stats():
+    """Get statistics about the knowledge graph."""
+    import time
+    from src.entity_resolution import get_knowledge_graph
+    
+    start_time = time.time()
+    
+    graph = get_knowledge_graph()
+    stats = graph.get_graph_stats()
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return GraphStatsResponse(
+        current_entities=stats.get("current_entities", 0),
+        current_relationships=stats.get("current_relationships", 0),
+        current_clusters=stats.get("current_clusters", 0),
+        cache_utilization=stats.get("cache_utilization", 0.0),
+        graph_density=stats.get("graph_density", 0.0),
+        graph_connected_components=stats.get("graph_connected_components", 0),
+        processing_time_ms=processing_time,
+    )
+
+
+@app.post(
+    "/api/v1/entity-resolution/propagate",
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Propagate risk from entity",
+)
+async def propagate_risk(entity_id: str, additional_risk: float = Query(default=0.0, ge=0.0, le=1.0)):
+    """Propagate risk from a source entity to all connected entities."""
+    import time
+    from src.entity_resolution import get_risk_propagator
+    
+    start_time = time.time()
+    
+    propagator = get_risk_propagator()
+    result = propagator.propagate_risk(entity_id, additional_risk)
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "source_entity_id": result.source_entity_id,
+        "original_risk_score": result.original_risk_score,
+        "propagated_entities": result.propagated_entities,
+        "total_propagated": result.total_propagated,
+        "max_propagation_depth": result.max_propagation_depth,
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.post(
+    "/api/v1/entity-resolution/detect-rings",
+    tags=["Entity Resolution"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Detect fraud rings using specified algorithm",
+)
+async def detect_fraud_rings(
+    min_cluster_size: int = Query(default=2, ge=2, le=100),
+    algorithm: str = Query(default="CONNECTED_COMPONENTS", description="Algorithm: CONNECTED_COMPONENTS, BREADTH_FIRST_SEARCH, DEPTH_FIRST_SEARCH, LABEL_PROPAGATION"),
+    risk_threshold: float = Query(default=0.0, ge=0.0, le=1.0),
+):
+    """Detect fraud rings using the specified algorithm."""
+    import time
+    from src.entity_resolution import get_cluster_engine
+    from src.entity_resolution.cluster_engine import ClusteringAlgorithm, RingDetectionRequest
+    
+    start_time = time.time()
+    
+    engine = get_cluster_engine()
+    
+    # Parse algorithm
+    try:
+        algo = ClusteringAlgorithm(algorithm.upper())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid algorithm: {algorithm}")
+    
+    request = RingDetectionRequest(
+        min_cluster_size=min_cluster_size,
+        risk_threshold=risk_threshold,
+        algorithm=algo,
+    )
+    
+    result = engine.detect_fraud_rings(request)
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "clusters": [
+            {
+                "cluster_id": c.cluster_id,
+                "entity_ids": list(c.entity_ids),
+                "risk_score": c.risk_score,
+                "tags": list(c.tags),
+                "created_at": c.created_at.isoformat(),
+            }
+            for c in result.clusters
+        ],
+        "total_entities": result.total_entities,
+        "total_clusters": result.total_clusters,
+        "high_risk_clusters": result.high_risk_clusters,
+        "algorithm_used": result.algorithm_used.value,
+        "processing_time_ms": processing_time,
+    }
 
 
 def main():
