@@ -422,7 +422,9 @@ def compute_risk_score(
                 else getattr(api_state, "account_profiles", {})
             )
             config = config if config is not None else getattr(api_state, "config", {})
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Failed to load graph state from api_state: %s", exc)
             graph_loaded = False
 
     mule_accounts = mule_accounts or set()

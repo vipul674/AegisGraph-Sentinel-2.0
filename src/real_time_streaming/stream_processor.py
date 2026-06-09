@@ -181,7 +181,9 @@ class StreamProcessor:
             if all(c in allowed_chars for c in expr):
                 return eval(expr)
             return 0.0
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug("Formula evaluation failed: %s", exc)
             return 0.0
     
     def get_stream_summary(self, stream_name: str) -> Dict[str, Any]:

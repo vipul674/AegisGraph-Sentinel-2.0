@@ -873,7 +873,8 @@ def _load_fallback_scoring_config() -> dict:
         from ..utils.helpers import load_thresholds
         thresholds = load_thresholds("config/thresholds.yaml")
         return thresholds.get("fallback_scoring", {})
-    except Exception:
+    except Exception as exc:
+        _api_logger.warning("Failed to load fallback scoring config, using empty defaults: %s", exc)
         return {}
 
 _FALLBACK_SCORING = _load_fallback_scoring_config()
@@ -1700,8 +1701,8 @@ def _analyze_keystrokes_sync(biometrics: dict) -> bool:
             flight_cv = np.std(flight_times_arr) / np.mean(flight_times_arr)
             if flight_cv > 0.35:
                 behavioral_stress_detected = True
-    except Exception:
-        pass
+    except Exception as exc:
+        _api_logger.debug("Keystroke stress analysis failed: %s", exc)
     return behavioral_stress_detected
 
 @app.post(
@@ -2795,7 +2796,8 @@ async def blast_radius_analysis(request: BlastRadiusRequest):
     # NetworkX supports `in` operator; Neo4j provider exposes `__contains__`.
     try:
         node_exists = request.node_id in graph
-    except Exception:
+    except Exception as exc:
+        _api_logger.warning("Failed to check node existence in graph: %s", exc)
         node_exists = False
 
     if not node_exists:
