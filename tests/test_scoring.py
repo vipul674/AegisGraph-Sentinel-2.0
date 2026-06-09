@@ -178,7 +178,7 @@ def test_legacy_inference_wrapper_matches_central_assessment_for_neutral_inputs(
     transaction = {
         "source_account": "neutral_user",
         "target_account": "neutral_merchant",
-        "amount": 100.0,
+        "amount": 100.0, 
         "timestamp": "2025-01-01T12:00:00Z",
     }
 
@@ -266,3 +266,12 @@ def test_risk_scorer_metadata_marks_circular_transfers():
     scorer = RiskScorer(component_weights={"graph": 0.5, "velocity": 0.5})
     assessment = scorer.assess({"graph": 0.4, "velocity": 0.3}, metadata={"transactions": transactions})
     assert assessment.metadata.get("circular_transfers") is True
+
+def test_detect_circular_transfers_no_duplicate_cycles():
+    transactions = [
+        {"source_account": "A", "target_account": "B"},
+        {"source_account": "B", "target_account": "C"},
+        {"source_account": "C", "target_account": "A"},
+    ]
+    cycles = EdgeCaseHandler.detect_circular_transfers(transactions)
+    assert len(cycles) == 1 
