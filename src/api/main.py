@@ -873,10 +873,15 @@ def _load_fallback_scoring_config() -> dict:
         from ..utils.helpers import load_thresholds
         thresholds = load_thresholds("config/thresholds.yaml")
         return thresholds.get("fallback_scoring", {})
-    except Exception:
+    except Exception as exc:
+        _api_logger.warning("Failed to load fallback scoring config, using empty defaults: %s", exc)
         return {}
 
 _FALLBACK_SCORING = _load_fallback_scoring_config()
+
+
+def _is_degraded_scoring_mode() -> bool:
+    return not MODEL_AVAILABLE or not getattr(state, "graph_loaded", False)
 
 # Global state
 class AppState:
@@ -1700,8 +1705,8 @@ def _analyze_keystrokes_sync(biometrics: dict) -> bool:
             flight_cv = np.std(flight_times_arr) / np.mean(flight_times_arr)
             if flight_cv > 0.35:
                 behavioral_stress_detected = True
-    except Exception:
-        pass
+    except Exception as exc:
+        _api_logger.debug("Keystroke stress analysis failed: %s", exc)
     return behavioral_stress_detected
 
 @app.post(
@@ -1892,7 +1897,7 @@ async def check_transaction(
         # so they can be tuned without a code change.
         _model_degraded = False
         _trigger = _FALLBACK_SCORING.get("fallback_trigger_score", 0.25)
-        if not MODEL_AVAILABLE and risk_result.get('risk_score', 0) <= _trigger:
+        if _is_degraded_scoring_mode() and risk_result.get('risk_score', 0) <= _trigger:
             amount = request.amount
             _block_above = _FALLBACK_SCORING.get("block_above", 200000)
             _block_med_above = _FALLBACK_SCORING.get("block_medium_above", 100000)
@@ -2795,7 +2800,8 @@ async def blast_radius_analysis(request: BlastRadiusRequest):
     # NetworkX supports `in` operator; Neo4j provider exposes `__contains__`.
     try:
         node_exists = request.node_id in graph
-    except Exception:
+    except Exception as exc:
+        _api_logger.warning("Failed to check node existence in graph: %s", exc)
         node_exists = False
 
     if not node_exists:
