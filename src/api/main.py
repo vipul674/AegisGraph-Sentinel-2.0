@@ -122,6 +122,7 @@ from ..observability import get_audit_logger, get_logger
 from ..runtime import LifecycleManager, RuntimeState, RecoveryManager, RuntimeWatchdog
 from ..runtime.background_tasks import honeypot_auto_release_loop
 from ..security import sanitize_payload
+from .adaptive_auth_routes import register_routes as register_adaptive_auth_routes
 from .schemas import (
     AccountOpeningRequest,
     AccountOpeningResponse,
@@ -1565,7 +1566,8 @@ app = FastAPI(
         {"name": "Monitoring", "description": "System statistics and model metrics"},
         {"name": "Detection", "description": "Real-time fraud detection and risk scoring"},
         {"name": "Analytics", "description": "Graph analytics and alert summarization"},
-        {"name": "Administration", "description": "Honeypot management and blockchain evidence"}
+        {"name": "Administration", "description": "Honeypot management and blockchain evidence"},
+        {"name": "Adaptive Authentication", "description": "Risk-based authentication and continuous authorization"}
     ],
     docs_url="/docs" if SWAGGER_ENABLED else None,
     redoc_url="/redoc" if SWAGGER_ENABLED else None,
@@ -1612,6 +1614,8 @@ if SLOWAPI_AVAILABLE:
 register_exception_handlers(app)
 register_observability_middleware(app)
 
+# Register adaptive authentication routes
+register_adaptive_auth_routes(app)
 
 
 @app.get("/", tags=["Health"])
