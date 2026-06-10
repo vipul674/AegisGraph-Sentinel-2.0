@@ -5369,7 +5369,7 @@ async def get_user_devices(user_id: str):
 
 _identity_federation_service = None
 
-def get_identity_federation_service() -> "IdentityFederationService":
+def get_identity_federation_service():
     """Get or create the identity federation service singleton."""
     global _identity_federation_service
     if _identity_federation_service is None:
