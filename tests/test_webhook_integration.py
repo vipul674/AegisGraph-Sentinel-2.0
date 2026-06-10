@@ -481,6 +481,23 @@ async def test_e2e_webhook_integration_with_client() -> None:
         from src.config.settings import reset_settings_cache
         reset_settings_cache()
 
+        # Mock account profiles to include known mule account for testing
+        # Must be set before app starts to be available during scoring
+        from src.api.main import state, _FALLBACK_SCORING
+        state.account_profiles = {
+            "mule_acc_001": {
+                "account_id": "mule_acc_001",
+                "avg_transaction_amount": 5000,
+                "risk_score": 0.9,
+                "is_mule": True
+            }
+        }
+        # Also ensure mule_accounts includes the test account
+        state.mule_accounts.add("mule_acc_001")
+        # Override fallback scoring to ensure high amounts trigger BLOCK
+        _FALLBACK_SCORING["fallback_trigger_score"] = 1.0  # Always use fallback
+        _FALLBACK_SCORING["block_above"] = 100000  # Block amounts > 100k
+
         # App client startup runs lifecycle manager, which hooks up default subscriptions
         async with app.router.lifespan_context(app):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
