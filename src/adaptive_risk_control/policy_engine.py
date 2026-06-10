@@ -11,7 +11,6 @@ import uuid
 from .models import (
     AdaptivePolicy,
     ControlRule,
-    DecisionType,
     RiskLevel,
     MitigationAction,
     TransactionAssessment,
@@ -82,8 +81,8 @@ class PolicyDecisionEngine:
 
         # Check time window
         if "time_window" in conditions:
-            window = conditions["time_window"]
-            # Simplified check - would need actual time window logic
+            # Time window check would go here
+            pass
 
         return True
 

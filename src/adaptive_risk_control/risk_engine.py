@@ -14,7 +14,6 @@ from .models import (
     TransactionAssessment,
     DecisionType,
     FraudAttempt,
-    ThreatIndicator,
 )
 
 

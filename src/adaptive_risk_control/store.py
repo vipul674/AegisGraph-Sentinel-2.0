@@ -7,8 +7,7 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
-import uuid
+from typing import Any, Dict, List, Optional
 
 from .models import (
     RiskProfile,
@@ -18,8 +17,9 @@ from .models import (
     ControlRule,
     TransactionAssessment,
     RiskLevel,
-    DecisionType,
-    ControlStatus,
+    ThreatIndicator,
+    LearningFeedback,
+    AuditRecord,
 )
 
 
@@ -366,10 +366,6 @@ class AdaptiveRiskStore:
             RiskLevel.CRITICAL: 0.9,
         }
         return thresholds.get(risk_level, 0.5)
-
-
-# Import for type hints
-from .models import ThreatIndicator, LearningFeedback
 
 
 # Global store instance

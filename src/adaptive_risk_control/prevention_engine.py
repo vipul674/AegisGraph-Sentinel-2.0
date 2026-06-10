@@ -12,7 +12,6 @@ from .models import (
     FraudAttempt,
     MitigationAction,
     DecisionType,
-    RiskLevel,
     TransactionAssessment,
 )
 

@@ -11,7 +11,6 @@ import uuid
 from .models import (
     LearningFeedback,
     LearningFeedbackType,
-    RiskLevel,
     TransactionAssessment,
 )
 

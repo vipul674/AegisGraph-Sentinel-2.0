@@ -3,8 +3,6 @@ Tests for Adaptive Risk Control Platform.
 """
 
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, AsyncMock
 
 from src.adaptive_risk_control import (
     # Models
@@ -13,15 +11,11 @@ from src.adaptive_risk_control import (
     MitigationAction,
     LearningFeedbackType,
     RiskProfile,
-    RiskDecision,
-    FraudAttempt,
-    AdaptivePolicy,
-    ControlRule,
     TransactionAssessment,
-    RiskRecommendation,
+    ControlRule,
+    AdaptivePolicy,
     LearningFeedback,
     # Store
-    AdaptiveRiskStore,
     get_adaptive_risk_store,
     reset_store,
     # Engines
