@@ -24,7 +24,13 @@ class AdversarialDriftMonitor:
     """
     def __init__(self, p_value_threshold=0.05, webhook_url=None, alert_workers=4, alert_cooldown=300.0):
         self.p_value_threshold = p_value_threshold
-        self.webhook_url = webhook_url or os.getenv("SLACK_WEBHOOK_URL")
+        resolved_url = webhook_url or os.getenv("SLACK_WEBHOOK_URL")
+        if resolved_url and not resolved_url.startswith("https://"):
+            raise ValueError(
+                f"webhook_url must use HTTPS (got {resolved_url!r}). "
+                "Drift alerts contain model telemetry that must not be sent over plaintext HTTP."
+            )
+        self.webhook_url = resolved_url
         self._alert_workers = max(2, int(alert_workers))
         self._alert_executor = ThreadPoolExecutor(
             max_workers=self._alert_workers,
