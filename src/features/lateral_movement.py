@@ -1,3 +1,4 @@
+import logging
 import threading
 import time as _time
 
@@ -9,6 +10,8 @@ import numpy as np
 
 from ..config import get_settings
 from ..utils.redis_client import get_redis_client
+
+logger = logging.getLogger(__name__)
 
 # Optional Redis import for production scaling
 try:
@@ -63,9 +66,9 @@ class LateralMovementDetector:
         self.active_graph = nx.DiGraph()
 
         if self.use_neo4j:
-            print("LateralMovementDetector: Using active Neo4j Graph Database Backend.")
+            logger.info("LateralMovementDetector: Using active Neo4j Graph Database Backend.")
         elif self.use_redis:
-            print("LateralMovementDetector: Connected to Redis Backend for multi-worker scaling.")
+            logger.info("LateralMovementDetector: Connected to Redis Backend for multi-worker scaling.")
             try:
                 self.redis_client = get_redis_client(self.redis_url)
                 self.redis_client.ping()
@@ -74,10 +77,10 @@ class LateralMovementDetector:
                 self._graph_cache_max_size = 1024
                 self.redis_client.setnx("aegis:graph:version", 0)
             except Exception as e:
-                print(f"LateralMovementDetector: Redis initialization failed: {e}. Falling back to In-Memory Backend.")
+                logger.warning(f"LateralMovementDetector: Redis initialization failed: {e}. Falling back to In-Memory Backend.")
                 self.use_redis = False
         else:
-            print("LateralMovementDetector: Using Thread-Safe In-Memory Backend (Single Worker).")
+            logger.info("LateralMovementDetector: Using Thread-Safe In-Memory Backend (Single Worker).")
 
     def update_graph(self, src_account, dst_account, amount: float = 1.0, timestamp: Optional[float] = None):
         """Updates the network topology dynamically across all workers."""
