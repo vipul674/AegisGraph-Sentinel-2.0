@@ -85,6 +85,7 @@ class AdaptiveAuthStore:
         self._profiles: LRUCache = LRUCache(maxsize=max_profiles)
         self._policies: Dict[str, AuthorizationPolicy] = {}
         self._decisions: LRUCache = LRUCache(maxsize=max_sessions)
+        self._risk_scores: LRUCache = LRUCache(maxsize=max_sessions * 10)
         self._challenges: Dict[str, StepUpChallenge] = {}
         self._lock = threading.RLock()
         
@@ -220,25 +221,26 @@ class AdaptiveAuthStore:
     def store_risk_score(self, risk_score: RiskScore) -> None:
         """Store a risk score for a session."""
         key = f"{risk_score.session_id}:{risk_score.timestamp.isoformat()}"
-        self._decisions[key] = risk_score
-    
+        self._risk_scores[key] = risk_score
+
     def get_latest_risk_score(self, session_id: str) -> Optional[RiskScore]:
         """Get the most recent risk score for a session."""
         latest = None
         latest_time = None
-        for key, score in self._decisions.items():
+        for key, score in list(self._risk_scores.items()):
             if key.startswith(session_id + ":"):
                 if latest_time is None or score.timestamp > latest_time:
                     latest = score
                     latest_time = score.timestamp
         return latest
-    
+
     def get_risk_scores(self, session_id: str, limit: int = 10) -> List[RiskScore]:
         """Get recent risk scores for a session."""
-        scores = []
-        for key, score in self._decisions.items():
-            if key.startswith(session_id + ":"):
-                scores.append((score.timestamp, score))
+        scores = [
+            (score.timestamp, score)
+            for key, score in list(self._risk_scores.items())
+            if key.startswith(session_id + ":")
+        ]
         scores.sort(key=lambda x: x[0], reverse=True)
         return [s[1] for s in scores[:limit]]
     
@@ -339,6 +341,7 @@ class AdaptiveAuthStore:
                 if c.status == "pending" and not c.is_expired()
             ),
             "total_decisions": len(self._decisions),
+            "total_risk_scores": len(self._risk_scores),
         }
 
 
