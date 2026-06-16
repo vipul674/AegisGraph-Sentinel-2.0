@@ -50,7 +50,7 @@ import uvicorn
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import REGISTRY, Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from .middleware.security_headers import SecurityHeadersMiddleware
 from .websocket_manager import WebSocketManager
 
@@ -1601,17 +1601,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-TRANSACTION_DECISIONS = Counter(
+TRANSACTION_DECISIONS = REGISTRY._names_to_collectors.get("aegis_transaction_decisions_total") or Counter(
     "aegis_transaction_decisions_total",
     "Total transaction decisions made by AegisGraph",
     ["decision"]
 )
-API_LATENCY = Histogram(
+API_LATENCY = REGISTRY._names_to_collectors.get("aegis_api_latency_seconds") or Histogram(
     "aegis_api_latency_seconds",
     "API request latency in seconds",
     ["endpoint"]
 )
-ACTIVE_HONEYPOTS = Gauge(
+ACTIVE_HONEYPOTS = REGISTRY._names_to_collectors.get("aegis_active_honeypots") or Gauge(
     "aegis_active_honeypots",
     "Number of currently active honeypots"
 )
