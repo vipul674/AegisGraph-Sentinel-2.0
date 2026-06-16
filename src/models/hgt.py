@@ -278,11 +278,31 @@ class HGT(nn.Module):
         node_type: torch.LongTensor,
         edge_type: torch.LongTensor,
         edge_attr: Optional[torch.Tensor] = None,
+        return_attention_weights: bool = False,
     ):
+        last_attention = None
         for i in range(self.num_layers):
-            x = self.convs[i](x, edge_index, node_type, edge_type, edge_attr)
+            if return_attention_weights and i == self.num_layers - 1:
+                x, (_, last_attention) = self.convs[i](
+                    x,
+                    edge_index,
+                    node_type,
+                    edge_type,
+                    edge_attr,
+                    return_attention_weights=True,
+                )
+            else:
+                x = self.convs[i](
+                    x,
+                    edge_index,
+                    node_type,
+                    edge_type,
+                    edge_attr,
+                )
             if i < self.num_layers - 1:
                 x = self.norms[i](x)
                 x = F.relu(x)
                 x = F.dropout(x, p=self.dropout, training=self.training)
+        if return_attention_weights:
+            return x, (edge_index, last_attention)
         return x
