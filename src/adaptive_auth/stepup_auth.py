@@ -7,12 +7,10 @@ supporting multiple authentication methods and challenge types.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import secrets
-import random
 import string
-import time
+
+import pyotp
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -100,7 +98,7 @@ class StepUpAuthService:
     def __init__(self, store: AdaptiveAuthStore):
         self.store = store
         self._configs = self.DEFAULT_CONFIGS.copy()
-        self._totp_secrets: Dict[str, str] = {}  # user_id -> secret
+        self._totp_secrets: LRUCache = LRUCache(maxsize=100000)  # user_id -> secret
         self._verification_codes: Dict[str, str] = {}  # challenge_id -> code
         self._callback_pending: Dict[str, Dict[str, Any]] = {}  # challenge_id -> callback info
 
@@ -312,22 +310,22 @@ class StepUpAuthService:
         """Verify a TOTP code."""
         secret = self._totp_secrets.get(user_id)
         if not secret:
-            secret = self._generate_totp_secret(user_id)
+            secret = self._get_or_create_totp_secret(user_id)
 
-        expected = self._get_expected_totp(secret)
-        return response == expected
+        return pyotp.TOTP(secret).verify(response, valid_window=1)
 
-    def _generate_totp_secret(self, user_id: str) -> str:
-        """Generate a TOTP secret for a user."""
-        secret = hashlib.sha256(f"{user_id}_{time.time()}".encode()).hexdigest()[:32]
+    def _get_or_create_totp_secret(self, user_id: str) -> str:
+        """Return the existing TOTP secret for a user, or generate one if absent."""
+        secret = self._totp_secrets.get(user_id)
+        if secret:
+            return secret
+        secret = pyotp.random_base32()
         self._totp_secrets[user_id] = secret
         return secret
 
-    def _get_expected_totp(self, secret: str) -> str:
-        """Get expected TOTP for current time window."""
-        # Simplified TOTP for demo - in production use pyotp
-        counter = int(time.time()) // 30
-        return str(counter % 1000000).zfill(6)
+    def revoke_totp_secret(self, user_id: str) -> None:
+        """Remove a user's TOTP secret to force re-enrollment."""
+        self._totp_secrets.pop(user_id, None)
 
     def initiate_callback(
         self,
@@ -385,11 +383,11 @@ class StepUpAuthService:
 
     def setup_totp(self, user_id: str) -> Dict[str, Any]:
         """Set up TOTP for a user."""
-        secret = self._generate_totp_secret(user_id)
-        provisioning_uri = f"otpauth://totp/AegisGraph:{user_id}?secret={secret}&issuer=AegisGraph"
+        secret = self._get_or_create_totp_secret(user_id)
+        totp = pyotp.TOTP(secret)
         return {
             "secret": secret,
-            "provisioning_uri": provisioning_uri,
+            "provisioning_uri": totp.provisioning_uri(name=user_id, issuer_name="AegisGraph"),
             "algorithm": "SHA1",
             "digits": 6,
             "period": 30,
