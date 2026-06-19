@@ -7,6 +7,7 @@ supporting multiple authentication methods and challenge types.
 
 from __future__ import annotations
 
+import hmac
 import secrets
 import string
 
@@ -278,11 +279,11 @@ class StepUpAuthService:
 
         elif challenge_type == ChallengeType.SMS_OTP:
             stored_otp = self._verification_codes.get(f"{challenge.challenge_id}_otp")
-            return stored_otp == response
+            return hmac.compare_digest(stored_otp or "", response or "")
 
         elif challenge_type == ChallengeType.EMAIL_OTP:
             stored_otp = self._verification_codes.get(f"{challenge.challenge_id}_otp")
-            return stored_otp == response
+            return hmac.compare_digest(stored_otp or "", response or "")
 
         elif challenge_type == ChallengeType.PUSH_NOTIFICATION:
             return response.lower() == "approved"
@@ -296,10 +297,12 @@ class StepUpAuthService:
         elif challenge_type == ChallengeType.SECURITY_QUESTIONS:
             correct_answers = challenge.metadata.get("correct_answers", {})
             provided_answers = context.get("answers", {}) if context else {}
+            all_match = True
             for question, correct in correct_answers.items():
-                if provided_answers.get(question, "").lower() != correct.lower():
-                    return False
-            return True
+                provided = provided_answers.get(question, "").lower()
+                if not hmac.compare_digest(provided, correct.lower()):
+                    all_match = False
+            return all_match
 
         elif challenge_type == ChallengeType.CALLBACK:
             return context and context.get("callback_verified", False)
