@@ -162,7 +162,7 @@ class StepUpAuthService:
                 challenge.metadata["otp_to_send"] = otp  # In production, sent via SMS/email
 
         # Store challenge
-        self.store._challenges[challenge.challenge_id] = challenge
+        self.store.add_challenge(challenge)
 
         # Update session with active challenge
         session = self.store.get_session_unsafe(session_id)

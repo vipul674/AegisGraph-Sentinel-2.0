@@ -42,6 +42,7 @@ class AdaptiveAuthStore:
         self._risk_scores: LRUCache = LRUCache(maxsize=max_sessions * 10)
         self._challenges: LRUCache = LRUCache(maxsize=50000)
         self._user_sessions: Dict[str, Set[str]] = defaultdict(set)
+        self._session_challenges: Dict[str, Set[str]] = defaultdict(set)
         self._lock = threading.RLock()
         
         # Initialize default policies
@@ -251,9 +252,14 @@ class AdaptiveAuthStore:
             user_id=user_id,
             challenge_type=ChallengeType(challenge_type),
         )
-        self._challenges[challenge.challenge_id] = challenge
+        self.add_challenge(challenge)
         return challenge
-    
+
+    def add_challenge(self, challenge: StepUpChallenge) -> None:
+        """Store a challenge and index it by session."""
+        self._challenges[challenge.challenge_id] = challenge
+        self._session_challenges[challenge.session_id].add(challenge.challenge_id)
+
     def get_challenge(self, challenge_id: str) -> Optional[StepUpChallenge]:
         """Get a challenge by ID."""
         challenge = self._challenges.get(challenge_id)
@@ -268,20 +274,25 @@ class AdaptiveAuthStore:
     def get_session_challenges(self, session_id: str) -> List[StepUpChallenge]:
         """Get all active challenges for a session."""
         challenges = []
-        for challenge in self._challenges.values():
-            if challenge.session_id == session_id and challenge.status == "pending":
-                if not challenge.is_expired():
-                    challenges.append(challenge)
+        for cid in list(self._session_challenges.get(session_id, set())):
+            challenge = self._challenges.get(cid)
+            if challenge and challenge.status == "pending" and not challenge.is_expired():
+                challenges.append(challenge)
         return challenges
-    
+
     def cleanup_expired_challenges(self) -> int:
         """Remove expired challenges. Returns count removed."""
         expired = [
-            cid for cid, c in list(self._challenges.items())
+            (cid, c) for cid, c in list(self._challenges.items())
             if c.is_expired() or c.status in ("completed", "failed", "cancelled", "expired")
         ]
-        for cid in expired:
+        for cid, challenge in expired:
             self._challenges.pop(cid, None)
+            session_challenges = self._session_challenges.get(challenge.session_id)
+            if session_challenges is not None:
+                session_challenges.discard(cid)
+                if not session_challenges:
+                    del self._session_challenges[challenge.session_id]
         return len(expired)
 
     # Decision Storage
