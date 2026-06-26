@@ -10,6 +10,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import time
@@ -25,6 +26,8 @@ from threading import Lock
 from typing import Any, Dict, List, Optional
 
 from ..lru_cache import LRUCache
+
+logger = logging.getLogger(__name__)
 
 import networkx as nx
 import numpy as np
@@ -1615,8 +1618,9 @@ async def metrics():
         manager = await get_honeypot_manager()
         active_count = len(manager.get_active_honeypots())
         ACTIVE_HONEYPOTS.set(active_count)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to collect honeypot metrics: %s", exc)
+        ACTIVE_HONEYPOTS.set(0)
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
