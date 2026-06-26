@@ -108,6 +108,7 @@ from ..runtime.background_tasks import honeypot_auto_release_loop
 from ..security import sanitize_payload
 from .adaptive_auth_routes import register_routes as register_adaptive_auth_routes
 from .archival_routes import register_routes as register_archival_routes
+from .defense_routes import router as defense_router
 from .schemas import (
     AccountOpeningRequest,
     AccountOpeningResponse,
@@ -1670,6 +1671,9 @@ register_adaptive_auth_routes(app)
 
 # Register archival routes (Issue #1477 — automated data archival strategy)
 register_archival_routes(app)
+
+# Register Adaptive Defense routes (Issue #1497)
+app.include_router(defense_router)
 
 
 @app.get("/", tags=["Health"])
