@@ -72,7 +72,8 @@ def dump_graph_state(graph: nx.Graph, log_dir: str = "logs"):
     # Serialize using NetworkX built-in node link data structure
     try:
         from networkx.readwrite import json_graph
-        data = json_graph.node_link_data(graph)
+        # Add edges="links" to prevent FutureWarnings in newer NetworkX versions
+        data = json_graph.node_link_data(graph, edges="links")
         
         # Need to handle objects that aren't natively JSON serializable (like datetime)
         def default_serializer(obj):
