@@ -13,6 +13,7 @@ from .models import (
     GraphEdge,
     CommunityDetection,
     RiskPropagation,
+    LateralMovementSimulation,
     CentralityMetrics,
     PathAnalysis,
     GraphStats,
@@ -213,6 +214,47 @@ class GraphService:
             "average_risk": avg_risk,
             "max_depth": max_depth,
         }
+
+    def simulate_lateral_movement(
+        self,
+        compromised_node_id: str,
+        max_steps: int = 3,
+        min_weight_threshold: float = 0.5
+    ) -> Optional[LateralMovementSimulation]:
+        """Simulate lateral movement and calculate blast radius."""
+        try:
+            vulnerable_node_ids = self._store.simulate_lateral_movement(
+                compromised_node_id,
+                max_steps=max_steps,
+                min_weight_threshold=min_weight_threshold
+            )
+            
+            if not vulnerable_node_ids:
+                return None
+                
+            stats = self.get_graph_statistics()
+            total_network_nodes = stats.total_nodes
+            
+            blast_radius_percentage = 0.0
+            if total_network_nodes > 0:
+                blast_radius_percentage = (len(vulnerable_node_ids) / total_network_nodes) * 100
+                
+            high_value_assets_at_risk = 0
+            for node_id in vulnerable_node_ids:
+                node = self._store.get_node(node_id)
+                if node and any(tag.lower() in ("high_value", "critical", "crown_jewel") for tag in node.tags):
+                    high_value_assets_at_risk += 1
+                    
+            return LateralMovementSimulation(
+                compromised_node_id=compromised_node_id,
+                vulnerable_nodes=vulnerable_node_ids,
+                simulation_steps=max_steps,
+                blast_radius_percentage=round(blast_radius_percentage, 2),
+                high_value_assets_at_risk=high_value_assets_at_risk
+            )
+        except Exception as e:
+            logger.error("Failed to simulate lateral movement from %s: %s", compromised_node_id, e, exc_info=True)
+            return None
 
     def search_by_properties(
         self,
